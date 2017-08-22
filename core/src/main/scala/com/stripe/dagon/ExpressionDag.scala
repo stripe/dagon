@@ -29,7 +29,8 @@ sealed trait ExpressionDag[N[_]] { self =>
   protected def roots: Set[Id[_]]
   protected def nextId: Int
 
-  private def copy(id2Exp: HMap[Id, Expr[N, ?]] = self.idToExp,
+  private def copy(
+    id2Exp: HMap[Id, Expr[N, ?]] = self.idToExp,
     node2Literal: FunctionK[N, Literal[N, ?]] = self.nodeToLiteral,
     gcroots: Set[Id[_]] = self.roots,
     id: Int = self.nextId
@@ -50,11 +51,12 @@ sealed trait ExpressionDag[N[_]] { self =>
     HCache.empty[N, Lambda[t => Option[Id[t]]]]
 
   /**
-   * Add a GC root, or tail in the DAG, that can never be deleted
-   * currently, we only support a single root
+   * Add a GC root, or tail in the DAG, that can never be deleted.
    */
-  private def addRoot[_](id: Id[_]): ExpressionDag[N] =
-    copy(gcroots = roots + id)
+  def addRoot[T](node: N[T]): (ExpressionDag[N], Id[T]) = {
+    val (dag, id) = ensure(node)
+    (dag.copy(gcroots = roots + id), id)
+  }
 
   /**
    * Which ids are reachable from the roots
@@ -64,17 +66,18 @@ sealed trait ExpressionDag[N[_]] { self =>
     // This is a constant function at the type level
     type IdSet[t] = Set[Id[_]]
     def expand(s: Set[Id[_]]): Set[Id[_]] = {
-      val partial = new PartialFunctionK[HMap[Id, Expr[N, ?]]#Pair, IdSet] {
+      val f = new FunctionK[HMap[Id, Expr[N, ?]]#Pair, Lambda[x => Option[Set[Id[_]]]]] {
         def apply[T] = {
-          case (id, Expr.Const(_)) if s(id) => s
-          case (id, Expr.Var(v)) if s(id) => s + v
-          case (id, Expr.Unary(id0, _)) if s(id) => s + id0
-          case (id, Expr.Binary(id0, id1, _)) if s(id) => (s + id0) + id1
+          case (id, Expr.Const(_)) if s(id) => Some(s)
+          case (id, Expr.Var(v)) if s(id) => Some(s + v)
+          case (id, Expr.Unary(id0, _)) if s(id) => Some(s + id0)
+          case (id, Expr.Binary(id0, id1, _)) if s(id) => Some((s + id0) + id1)
+          case _ => None
         }
       }
       // Note this Stream must always be non-empty as long as roots are
       // TODO: we don't need to use collect here, just .get on each id in s
-      idToExp.collect(partial).reduce(_ ++ _)
+      idToExp.optionMap[IdSet](f).reduce(_ ++ _)
     }
     // call expand while we are still growing
     def go(s: Set[Id[_]]): Set[Id[_]] = {
@@ -163,15 +166,14 @@ sealed trait ExpressionDag[N[_]] { self =>
    */
   def find[T](node: N[T]): Option[Id[T]] =
     nodeToId.getOrElseUpdate(node, {
-      type P[x] = HMap[Id, Expr[N, ?]]#Pair[x]
-      val pf = new PartialFunctionK[P, Id] {
-        def apply[T1] = {
-          // Make sure to return the original Id, not a Id -> Var -> Expr
-          case (thisId, expr) if !expr.isVar && node == expr.evaluate(idToExp) => thisId
+      val f = new FunctionK[HMap[Id, Expr[N, ?]]#Pair, Lambda[x => Option[Id[x]]]] {
+        // Make sure to return the original Id, not a Id -> Var -> Expr
+        def apply[T1] = { case (thisId, expr) =>
+          if (!expr.isVar && node == expr.evaluate(idToExp)) Some(thisId) else None
         }
       }
 
-      idToExp.collect(pf) match {
+      idToExp.optionMap(f) match {
         case Stream.Empty =>
           None
         case id #:: Stream.Empty =>
@@ -265,17 +267,16 @@ sealed trait ExpressionDag[N[_]] { self =>
    * use .contains(n) to check for containment
    */
   def fanOut(node: N[_]): Int = {
-    val pointsToNode = new PartialFunctionK[HMap[Id, Expr[N, ?]]#Pair, N] {
-      def apply[T] = {
-        case (id, expr) if dependsOn(expr, node) => evaluate(id)
-      }
+    val pointsToNode = new FunctionK[HMap[Id, Expr[N, ?]]#Pair, Lambda[x => Option[N[x]]]] {
+      def apply[T] = { case (id, expr) => if (dependsOn(expr, node)) Some(evaluate(id)) else None }
     }
-    idToExp.collect(pointsToNode).toSet.size
+    idToExp.optionMap(pointsToNode).toSet.size
   }
   def contains(node: N[_]): Boolean = find(node).isDefined
 }
 
 object ExpressionDag {
+
   private def empty[N[_]](n2l: FunctionK[N, Literal[N, ?]]): ExpressionDag[N] =
     new ExpressionDag[N] {
       val idToExp = HMap.empty[Id, Expr[N, ?]]
@@ -287,11 +288,8 @@ object ExpressionDag {
   /**
    * This creates a new ExpressionDag rooted at the given tail node
    */
-  def apply[T, N[_]](n: N[T],
-    nodeToLit: FunctionK[N, Literal[N, ?]]): (ExpressionDag[N], Id[T]) = {
-    val (dag, id) = empty(nodeToLit).ensure(n)
-    (dag.addRoot(id), id)
-  }
+  def apply[T, N[_]](n: N[T], nodeToLit: FunctionK[N, Literal[N, ?]]): (ExpressionDag[N], Id[T]) =
+    empty(nodeToLit).addRoot(n)
 
   /**
    * This is the most useful function. Given a N[T] and a way to convert to Literal[T, N],

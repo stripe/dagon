@@ -18,9 +18,10 @@
 package com.stripe.dagon
 
 import org.scalacheck.Prop._
-import org.scalacheck.{ Gen, Properties }
+import org.scalacheck.{ Gen, Prop, Properties, Test }
 
 object ExpressionDagTests extends Properties("ExpressionDag") {
+
   /*
    * Here we test with a simple algebra optimizer
    */
@@ -28,7 +29,16 @@ object ExpressionDagTests extends Properties("ExpressionDag") {
   sealed trait Formula[T] { // we actually will ignore T
     def evaluate: Int
     def closure: Set[Formula[T]]
+
+    def inc(n: Int): Formula[T] = Inc(this, n)
+    def +(that: Formula[T]): Formula[T] = Sum(this, that)
+    def *(that: Formula[T]): Formula[T] = Product(this, that)
   }
+
+  object Formula {
+    def apply(n: Int): Formula[Unit] = Constant(n)
+  }
+
   case class Constant[T](override val evaluate: Int) extends Formula[T] {
     def closure = Set(this)
   }
@@ -45,12 +55,20 @@ object ExpressionDagTests extends Properties("ExpressionDag") {
     def closure = (left.closure ++ right.closure) + this
   }
 
-  def genForm: Gen[Formula[Int]] = Gen.frequency((1, genProd),
+  def testRule[T](start: Formula[T], expected: Formula[T], rule: Rule[Formula]): Prop = {
+    val got = ExpressionDag.applyRule(start, toLiteral, rule)
+    (got == expected) :| s"$got == $expected"
+  }
+
+
+  def genForm: Gen[Formula[Int]] = Gen.frequency(
+    (1, genProd),
     (1, genSum),
     (4, genInc),
     (4, genConst))
 
   def genConst: Gen[Formula[Int]] = Gen.chooseNum(Int.MinValue, Int.MaxValue).map(Constant(_))
+
   def genInc: Gen[Formula[Int]] = for {
     by <- Gen.chooseNum(Int.MinValue, Int.MaxValue)
     f <- Gen.lzy(genForm)
@@ -61,6 +79,7 @@ object ExpressionDagTests extends Properties("ExpressionDag") {
     // We have to make dags, so select from the closure of left sometimes
     right <- Gen.oneOf(genForm, Gen.oneOf(left.closure.toSeq))
   } yield Sum(left, right)
+
   def genProd: Gen[Formula[Int]] = for {
     left <- Gen.lzy(genForm)
     // We have to make dags, so select from the closure of left sometimes
@@ -161,11 +180,13 @@ object ExpressionDagTests extends Properties("ExpressionDag") {
    */
   property("Node structural equality implies Id equality") = forAll(genForm) { form =>
     val (dag, id) = ExpressionDag(form, toLiteral)
-    dag.idToExp.collect(new PartialFunctionK[HMap[Id, Expr[Formula, ?]]#Pair, BoolT] {
+    dag.idToExp.optionMap[BoolT](new FunctionK[HMap[Id, Expr[Formula, ?]]#Pair, Lambda[x => Option[Boolean]]] {
       def apply[T] = {
         case (id, expr) =>
           val node = expr.evaluate(dag.idToExp)
-          dag.idOf(node) == id
+          Some(dag.idOf(node) == id)
+        case _ =>
+          None
       }
     }).forall(identity)
   }
@@ -198,9 +219,20 @@ object ExpressionDagTests extends Properties("ExpressionDag") {
     }
   }
   property("EvaluationRule totally evaluates") = forAll(genForm) { form =>
-    ExpressionDag.applyRule(form, toLiteral, EvaluationRule) match {
-      case Constant(x) if x == form.evaluate => true
-      case _ => false
-    }
+    testRule(form, Constant(form.evaluate), EvaluationRule)
+  }
+
+  property("Crush down explicit diamond") = forAll { (xs0: List[Int], ys0: List[Int]) =>
+    val a = Formula(123)
+  
+    // ensure that we won't ever use the same constant on the LHS and RHS
+    // because we want all our inc nodes to fan out to only one other node.
+    def munge(xs: List[Int]): List[Int] = xs.take(10).map(_ % 10)
+    val (xs, ys) = (munge(0 :: xs0), munge(0 :: ys0).map(_ + 1000))
+    val (x, y) = (xs.sum, ys.sum)
+  
+    val complex = xs.foldLeft(a)(_ inc _) + ys.foldLeft(a)(_ inc _)
+    val expected = a.inc(x) + a.inc(y)
+    testRule(complex, expected, CombineInc)
   }
 }

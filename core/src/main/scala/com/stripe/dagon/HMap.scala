@@ -65,33 +65,8 @@ final class HMap[K[_], V[_]](protected val map: Map[K[_], V[_]]) {
       case (k, w) if v == w => k.asInstanceOf[K[T]]
     }.toSet
 
-  // go through all the keys, and find the first key that matches this
-  // function and apply
-  def updateFirst(p: PartialFunctionK[K, V]): Option[(HMap[K, V], K[_])] = {
-    def collector[T]: PartialFunction[(K[T], V[T]), (K[T], V[T])] = {
-      val pf = p.apply[T]
-
-      {
-        case (kv: (K[T], V[T])) if pf.isDefinedAt(kv._1) =>
-          val v2 = pf(kv._1)
-          (kv._1, v2)
-      }
-    }
-
-    map.asInstanceOf[Map[K[Any], V[Any]]].collectFirst(collector)
-      .map { kv =>
-        (this + kv, kv._1)
-      }
-  }
-
   def optionMap[R[_]](f: FunctionK[Pair, Lambda[x => Option[R[x]]]]): Stream[R[_]] =
     map.toStream.asInstanceOf[Stream[(K[Any], V[Any])]].flatMap(f.apply.apply(_))
-
-  def collect[R[_]](p: PartialFunctionK[Pair, R]): Stream[R[_]] =
-    map.toStream.asInstanceOf[Stream[(K[Any], V[Any])]].collect(p.apply)
-
-  def collectValues[R[_]](p: PartialFunctionK[V, R]): Stream[R[_]] =
-    map.values.toStream.asInstanceOf[Stream[V[Any]]].collect(p.apply)
 }
 
 object HMap {
