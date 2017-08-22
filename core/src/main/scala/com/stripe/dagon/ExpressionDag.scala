@@ -32,7 +32,8 @@ sealed trait ExpressionDag[N[_]] { self =>
   private def copy(id2Exp: HMap[Id, Expr[N, ?]] = self.idToExp,
     node2Literal: FunctionK[N, Literal[N, ?]] = self.nodeToLiteral,
     gcroots: Set[Id[_]] = self.roots,
-    id: Int = self.nextId): ExpressionDag[N] = new ExpressionDag[N] {
+    id: Int = self.nextId
+  ): ExpressionDag[N] = new ExpressionDag[N] {
     def idToExp = id2Exp
     def roots = gcroots
     def nodeToLiteral = node2Literal
@@ -40,17 +41,20 @@ sealed trait ExpressionDag[N[_]] { self =>
   }
 
   override def toString: String =
-    "ExpressionDag(idToExp = %s)".format(idToExp)
+    s"ExpressionDag(idToExp = $idToExp)"
 
   // This is a cache of Id[T] => Option[N[T]]
-  private val idToN = HCache.empty[Id, ({ type ON[T] = Option[N[T]] })#ON]
-  private val nodeToId = HCache.empty[N, ({ type OID[T] = Option[Id[T]] })#OID]
+  private val idToN =
+    HCache.empty[Id, Lambda[t => Option[N[t]]]]
+  private val nodeToId =
+    HCache.empty[N, Lambda[t => Option[Id[t]]]]
 
   /**
    * Add a GC root, or tail in the DAG, that can never be deleted
    * currently, we only support a single root
    */
-  private def addRoot[_](id: Id[_]) = copy(gcroots = roots + id)
+  private def addRoot[_](id: Id[_]): ExpressionDag[N] =
+    copy(gcroots = roots + id)
 
   /**
    * Which ids are reachable from the roots
@@ -70,23 +74,20 @@ sealed trait ExpressionDag[N[_]] { self =>
       }
       // Note this Stream must always be non-empty as long as roots are
       // TODO: we don't need to use collect here, just .get on each id in s
-      idToExp.collect[IdSet](partial)
-        .reduce(_ ++ _)
+      idToExp.collect(partial).reduce(_ ++ _)
     }
     // call expand while we are still growing
     def go(s: Set[Id[_]]): Set[Id[_]] = {
       val step = expand(s)
-      if (step == s) s
-      else go(step)
+      if (step == s) s else go(step)
     }
     go(roots)
   }
 
   private def gc: ExpressionDag[N] = {
     val goodIds = reachableIds
-    type BoolT[t] = Boolean
     val toKeepI2E = idToExp.filter(new FunctionK[HMap[Id, Expr[N, ?]]#Pair, BoolT] {
-      def apply[T] = { idExp => goodIds(idExp._1) }
+      def apply[T] = { case (id, _) => goodIds(id) }
     })
     copy(id2Exp = toKeepI2E)
   }
@@ -116,51 +117,24 @@ sealed trait ExpressionDag[N[_]] { self =>
    * it, and return from there.
    */
   def applyOnce(rule: Rule[N]): ExpressionDag[N] = {
+    type DagT[T] = ExpressionDag[N]
 
-    /**
-     * Type inference breaks below using Tuple2 because
-     * Tuple2 is covariant it seems. This is a quick
-     * work around
-     */
-    case class InvariantTuple[T](id: Id[T], node: N[T])
+    val f = new FunctionK[HMap[Id, Expr[N, ?]]#Pair, Lambda[x => Option[DagT[x]]]] {
+      def apply[U] = { (kv: (Id[U], Expr[N, U])) =>
+        val (id, _) = kv
+        rule.apply[U](self)(evaluate(id)).map { n =>
+          val (dag, newId) = ensure(n)
 
-    val getN = new PartialFunctionK[HMap[Id, Expr[N, ?]]#Pair, InvariantTuple] {
-      def apply[U] = {
-        val fn = rule.apply[U](self)
-
-        def ruleApplies(id: Id[U]): Boolean = {
-          val n = evaluate(id)
-          fn(n) match {
-            case Some(n1) => n != n1
-            case None => false
-          }
-        }
-
-
-        {
-          case (id, _) if ruleApplies(id) =>
-            // Sucks to have to call fn, twice, but oh well
-            InvariantTuple(id, fn(evaluate(id)).get)
+          // We can't delete Ids which may have been shared
+          // publicly, and the ids may be embedded in many
+          // nodes. Instead we remap 'id' to be a pointer
+          // to 'newid'.
+          dag.copy(id2Exp = dag.idToExp + (id -> Expr.Var[N, U](newId))).gc
         }
       }
     }
 
-    idToExp.collect[InvariantTuple](getN).headOption match {
-      case None => this
-      case Some(tup) => // (i, n)) =>
-        def go[T](ivt: InvariantTuple[T]): ExpressionDag[N] = {
-          /*
-           * We can't delete Ids which may have been shared
-           * publicly, and the ids may be embedded in many
-           * nodes. Instead we remap this i to be a pointer
-           * to the newid.
-           */
-          val InvariantTuple(i, n) = ivt
-          val (dag, newId) = ensure(n)
-          dag.copy(id2Exp = dag.idToExp + (i -> Expr.Var[N, T](newId))).gc
-        }
-        go(tup)
-    }
+    idToExp.optionMap[DagT](f).headOption.getOrElse(this)
   }
 
   /**
@@ -169,7 +143,7 @@ sealed trait ExpressionDag[N[_]] { self =>
    * Note, Expr must never be a Var
    */
   private def addExp[T](node: N[T], exp: Expr[N, T]): (ExpressionDag[N], Id[T]) = {
-    require(!exp.isInstanceOf[Expr.Var[N, T]])
+    require(!exp.isVar)
 
     find(node) match {
       case None =>
@@ -184,21 +158,23 @@ sealed trait ExpressionDag[N[_]] { self =>
    * This finds the Id[T] in the current graph that is equivalent
    * to the given N[T]
    */
-  def find[T](node: N[T]): Option[Id[T]] = nodeToId.getOrElseUpdate(node, {
-    val partial = new PartialFunctionK[HMap[Id, Expr[N, ?]]#Pair, Id] {
-      def apply[T1] = {
-        // Make sure to return the original Id, not a Id -> Var -> Expr
-        case (thisId, expr) if !expr.isInstanceOf[Expr.Var[N, _]] && node == expr.evaluate(idToExp) => thisId
+  def find[T](node: N[T]): Option[Id[T]] =
+    nodeToId.getOrElseUpdate(node, {
+      type P[x] = HMap[Id, Expr[N, ?]]#Pair[x]
+      val pf = new PartialFunctionK[P, Id] {
+        def apply[T1] = {
+          // Make sure to return the original Id, not a Id -> Var -> Expr
+          case (thisId, expr) if !expr.isVar && node == expr.evaluate(idToExp) => thisId
+        }
       }
-    }
-    idToExp.collect(partial).toList match {
-      case Nil => None
-      case id :: Nil =>
-        // this cast is safe if node == expr.evaluate(idToExp) implies types match
-        Some(id).asInstanceOf[Option[Id[T]]]
-      case others => None//sys.error(s"logic error, should only be one mapping: $node -> $others")
-    }
-  })
+
+      idToExp.collect(pf) match {
+        case id #:: Stream.Empty =>
+          // this cast is safe if node == expr.evaluate(idToExp) implies types match
+          Some(id).asInstanceOf[Option[Id[T]]]
+        case _ => None
+      }
+    })
 
   /**
    * This throws if the node is missing, use find if this is not
@@ -218,9 +194,8 @@ sealed trait ExpressionDag[N[_]] { self =>
   protected def ensure[T](node: N[T]): (ExpressionDag[N], Id[T]) =
     find(node) match {
       case Some(id) => (this, id)
-      case None => {
-        val lit: Literal[N, T] = toLiteral(node)
-        lit match {
+      case None =>
+        toLiteral(node) match {
           case Literal.Const(n) =>
             /**
              * Since the code is not performance critical, but correctness critical, and we can't
@@ -237,7 +212,6 @@ sealed trait ExpressionDag[N[_]] { self =>
             val (exp2, id2) = exp1.ensure(n2.evaluate)
             exp2.addExp(node, Expr.Binary(id1, id2, fn))
         }
-      }
     }
 
   /**
@@ -283,7 +257,7 @@ sealed trait ExpressionDag[N[_]] { self =>
         case (id, expr) if dependsOn(expr, node) => evaluate(id)
       }
     }
-    idToExp.collect[N](pointsToNode).toSet.size
+    idToExp.collect(pointsToNode).toSet.size
   }
   def contains(node: N[_]): Boolean = find(node).isDefined
 }

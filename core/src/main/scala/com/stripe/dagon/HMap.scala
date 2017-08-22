@@ -23,18 +23,22 @@ package com.stripe.dagon
  * the types are actually equal (either be careful or store a
  * type identifier).
  */
-sealed abstract class HMap[K[_], V[_]] {
+final class HMap[K[_], V[_]](protected val map: Map[K[_], V[_]]) {
+
   type Pair[t] = (K[t], V[t])
-  protected val map: Map[K[_], V[_]]
+
   override def toString: String =
     "H%s".format(map)
 
-  override def equals(that: Any): Boolean = that match {
-    case null => false
-    case h: HMap[_, _] => map.equals(h.map)
-    case _ => false
-  }
-  override def hashCode = map.hashCode
+  override def equals(that: Any): Boolean =
+    that match {
+      case null => false
+      case h: HMap[_, _] => map.equals(h.map)
+      case _ => false
+    }
+
+  override def hashCode: Int =
+    map.hashCode
 
   def +[T](kv: (K[T], V[T])): HMap[K, V] =
     HMap.from[K, V](map + kv)
@@ -42,22 +46,24 @@ sealed abstract class HMap[K[_], V[_]] {
   def -(k: K[_]): HMap[K, V] =
     HMap.from[K, V](map - k)
 
-  def apply[T](id: K[T]): V[T] = get(id).get
-
-  def contains[T](id: K[T]): Boolean = get(id).isDefined
-
-  def filter(pred: FunctionK[Pair, ({ type BoolT[T] = Boolean })#BoolT]): HMap[K, V] = {
-    val filtered = map.asInstanceOf[Map[K[Any], V[Any]]].filter(pred.apply[Any])
-    HMap.from[K, V](filtered.asInstanceOf[Map[K[_], V[_]]])
-  }
+  def apply[T](id: K[T]): V[T] =
+    get(id).get
 
   def get[T](id: K[T]): Option[V[T]] =
     map.get(id).asInstanceOf[Option[V[T]]]
 
-  def keysOf[T](v: V[T]): Set[K[T]] = map.collect {
-    case (k, w) if v == w =>
-      k.asInstanceOf[K[T]]
-  }.toSet
+  def contains[T](id: K[T]): Boolean =
+    get(id).isDefined
+
+  def filter(pred: FunctionK[Pair, BoolT]): HMap[K, V] = {
+    val filtered = map.asInstanceOf[Map[K[Any], V[Any]]].filter(pred.apply[Any])
+    HMap.from[K, V](filtered.asInstanceOf[Map[K[_], V[_]]])
+  }
+
+  def keysOf[T](v: V[T]): Set[K[T]] =
+    map.collect {
+      case (k, w) if v == w => k.asInstanceOf[K[T]]
+    }.toSet
 
   // go through all the keys, and find the first key that matches this
   // function and apply
@@ -78,6 +84,9 @@ sealed abstract class HMap[K[_], V[_]] {
       }
   }
 
+  def optionMap[R[_]](f: FunctionK[Pair, Lambda[x => Option[R[x]]]]): Stream[R[_]] =
+    map.toStream.asInstanceOf[Stream[(K[Any], V[Any])]].flatMap(f.apply.apply(_))
+
   def collect[R[_]](p: PartialFunctionK[Pair, R]): Stream[R[_]] =
     map.toStream.asInstanceOf[Stream[(K[Any], V[Any])]].collect(p.apply)
 
@@ -86,7 +95,10 @@ sealed abstract class HMap[K[_], V[_]] {
 }
 
 object HMap {
-  def empty[K[_], V[_]]: HMap[K, V] = from[K, V](Map.empty[K[_], V[_]])
+
+  def empty[K[_], V[_]]: HMap[K, V] =
+    from[K, V](Map.empty[K[_], V[_]])
+
   private def from[K[_], V[_]](m: Map[K[_], V[_]]): HMap[K, V] =
-    new HMap[K, V] { override val map = m }
+    new HMap[K, V](m)
 }

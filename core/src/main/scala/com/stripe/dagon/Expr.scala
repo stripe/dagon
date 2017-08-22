@@ -36,6 +36,12 @@ package com.stripe.dagon
 sealed trait Expr[N[_], T] {
   def evaluate(idToExp: HMap[Id, Expr[N, ?]]): N[T] =
     Expr.evaluate(idToExp, this)
+
+  final def isVar: Boolean =
+    this match {
+      case Expr.Var(_) => true
+      case _ => false
+    }
 }
 
 object Expr {

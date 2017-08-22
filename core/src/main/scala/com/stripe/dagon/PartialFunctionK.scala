@@ -9,4 +9,3 @@ package com.stripe.dagon
 trait PartialFunctionK[T[_], R[_]] {
   def apply[U]: PartialFunction[T[U], R[U]]
 }
-
