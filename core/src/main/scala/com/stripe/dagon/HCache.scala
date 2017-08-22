@@ -3,13 +3,18 @@ package com.stripe.dagon
 /**
  * This is a useful cache for memoizing heterogenously types functions
  */
-class HCache[K[_], V[_]]() {
-  private var hmap: HMap[K, V] = HMap.empty[K, V]
+sealed class HCache[K[_], V[_]] private (init: HMap[K, V]) {
+  private var hmap: HMap[K, V] = init
 
   /**
-   * Get snapshot of the current state
+   * Get an immutable snapshot of the current state
    */
   def snapshot: HMap[K, V] = hmap
+
+  /**
+   * Get a mutable copy of the current state
+   */
+  def duplicate: HCache[K, V] = new HCache(hmap)
 
   def getOrElseUpdate[T](k: K[T], v: => V[T]): V[T] =
     hmap.get(k) match {
@@ -19,4 +24,8 @@ class HCache[K[_], V[_]]() {
         hmap = hmap + (k -> res)
         res
     }
+}
+
+object HCache {
+  def empty[K[_], V[_]]: HCache[K, V] = new HCache(HMap.empty)
 }

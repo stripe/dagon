@@ -43,10 +43,8 @@ sealed trait ExpressionDag[N[_]] { self =>
     "ExpressionDag(idToExp = %s)".format(idToExp)
 
   // This is a cache of Id[T] => Option[N[T]]
-  private val idToN =
-    new HCache[Id, ({ type ON[T] = Option[N[T]] })#ON]()
-  private val nodeToId =
-    new HCache[N, ({ type OID[T] = Option[Id[T]] })#OID]()
+  private val idToN = HCache.empty[Id, ({ type ON[T] = Option[N[T]] })#ON]
+  private val nodeToId = HCache.empty[N, ({ type OID[T] = Option[Id[T]] })#OID]
 
   /**
    * Add a GC root, or tail in the DAG, that can never be deleted
