@@ -162,7 +162,7 @@ object ExpressionDagTests extends Properties("ExpressionDag") {
   property("Node structural equality implies Id equality") = forAll(genForm) { form =>
     val (dag, id) = ExpressionDag(form, toLiteral)
     type BoolT[T] = Boolean // constant type function
-    dag.idToExp.collect(new PartialFunctionK[HMap[Id, Expr[?, Formula]]#Pair, BoolT] {
+    dag.idToExp.collect(new PartialFunctionK[HMap[Id, Expr[Formula, ?]]#Pair, BoolT] {
       def apply[T] = {
         case (id, expr) =>
           val node = expr.evaluate(dag.idToExp)
