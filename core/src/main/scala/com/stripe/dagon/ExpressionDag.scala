@@ -116,7 +116,15 @@ sealed trait ExpressionDag[N[_]] { self =>
    * it, and return from there.
    */
   def applyOnce(rule: Rule[N]): ExpressionDag[N] = {
-    val getN = new PartialFunctionK[HMap[Id, Expr[N, ?]]#Pair, HMap[Id, N]#Pair] {
+
+    /**
+     * Type inference breaks below using Tuple2 because
+     * Tuple2 is covariant it seems. This is a quick
+     * work around
+     */
+    case class InvariantTuple[T](id: Id[T], node: N[T])
+
+    val getN = new PartialFunctionK[HMap[Id, Expr[N, ?]]#Pair, InvariantTuple] {
       def apply[U] = {
         val fn = rule.apply[U](self)
 
@@ -132,27 +140,26 @@ sealed trait ExpressionDag[N[_]] { self =>
         {
           case (id, _) if ruleApplies(id) =>
             // Sucks to have to call fn, twice, but oh well
-            (id, fn(evaluate(id)).get)
+            InvariantTuple(id, fn(evaluate(id)).get)
         }
       }
     }
-    idToExp.collect[HMap[Id, N]#Pair](getN).headOption match {
+
+    idToExp.collect[InvariantTuple](getN).headOption match {
       case None => this
-      case Some(tup) =>
-        // some type hand holding
-        def act[T](in: HMap[Id, N]#Pair[T]): ExpressionDag[N] = {
+      case Some(tup) => // (i, n)) =>
+        def go[T](ivt: InvariantTuple[T]): ExpressionDag[N] = {
           /*
            * We can't delete Ids which may have been shared
            * publicly, and the ids may be embedded in many
            * nodes. Instead we remap this i to be a pointer
            * to the newid.
            */
-          val (i, n) = in
+          val InvariantTuple(i, n) = ivt
           val (dag, newId) = ensure(n)
-          dag.copy(id2Exp = dag.idToExp + (i -> Expr.Var[N, T](newId)))
+          dag.copy(id2Exp = dag.idToExp + (i -> Expr.Var[N, T](newId))).gc
         }
-        // This cast should not be needed
-        act(tup.asInstanceOf[HMap[Id, N]#Pair[Any]]).gc
+        go(tup)
     }
   }
 
