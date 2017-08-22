@@ -1,26 +1,5 @@
-## Dagon
+package readme
 
-> Dagon [...] is an ancient Mesopotamian Assyro-Babylonian and Levantine
-> (Canaanite) deity. He appears to have been worshipped as a fertility
-> god in Ebla, Assyria, Ugarit and among the Amorites. The Hebrew Bible
-> mentions him as the national god of the Philistines with temples at
-> Ashdod and elsewhere in Gaza.
->
-> -- [Dagon Wikipedia entry](https://en.wikipedia.org/wiki/Dagon)
-
-### Overview
-
-Dagon is a library for rewriting
-[directed acyclic graphs](https://en.wikipedia.org/wiki/Directed_acyclic_graph)
-(i.e. DAGs).
-
-### Quick Start
-
-### Details
-
-Dagon is 
-
-```scala
 object Example {
 
   import com.stripe.dagon._
@@ -76,17 +55,5 @@ object Example {
   val b2 = a + Const(5) + Var("y")
   val c = b1 - b2
 
-  val simplified: Eqn[Unit] =
-    ExpressionDag.applyRule(c, toLiteral, rules)
+  ExpressionDag.applyRule(c, toLiteral, rules)
 }
-```
-
-### Future Work
-
-### Copyright and License
-
-Dagon is available to you under the [Apache License, version 2](https://www.apache.org/licenses/LICENSE-2.0).
-
-Copyright 2017 Stripe.
-
-Derived from [Summingbird](https://github.com/twitter/summingbird), which is copyright 2013-2017 Twitter.

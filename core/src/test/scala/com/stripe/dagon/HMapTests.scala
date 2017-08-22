@@ -79,10 +79,10 @@ object HMapTests extends Properties("HMap") {
   property("optionMap works") = forAll { (map: Map[Key[Int], Value[Int]]) =>
     val hm = map.foldLeft(HMap.empty[Key, Value])(_ + _)
     val f = new FunctionK[HMap[Key, Value]#Pair, Lambda[x => Option[Value[x]]]] {
-      def apply[T] = { case (Key(k), Value(v)) => if (k > v) Some(Value(k * v)) else None }
+      def toFunction[T] = { case (Key(k), Value(v)) => if (k > v) Some(Value(k * v)) else None }
     }
     val collected = hm.optionMap(f).map { case Value(v) => v }.toSet
-    val mapCollected = map.flatMap(f[Int].apply(_)).map { case Value(v) => v }.toSet
+    val mapCollected = map.flatMap(f(_)).map { case Value(v) => v }.toSet
     collected == mapCollected
   }
 }

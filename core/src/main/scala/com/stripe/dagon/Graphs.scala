@@ -3,6 +3,7 @@ package com.stripe.dagon
 import scala.collection.mutable
 
 object Graphs {
+
   /**
    * Return the depth first enumeration of reachable nodes,
    * NOT INCLUDING INPUT, unless it can be reached via neighbors

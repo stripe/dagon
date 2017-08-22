@@ -37,6 +37,10 @@ object ExpressionDagTests extends Properties("ExpressionDag") {
 
   object Formula {
     def apply(n: Int): Formula[Unit] = Constant(n)
+
+    def inc[T](by: Int): Formula[T] => Formula[T] = Inc(_, by)
+    def sum[T]: (Formula[T], Formula[T]) => Formula[T] = Sum(_, _)
+    def product[T]: (Formula[T], Formula[T]) => Formula[T] = Product(_, _)
   }
 
   case class Constant[T](override val evaluate: Int) extends Formula[T] {
@@ -86,50 +90,19 @@ object ExpressionDagTests extends Properties("ExpressionDag") {
     right <- Gen.oneOf(genForm, Gen.oneOf(left.closure.toSeq))
   } yield Product(left, right)
 
-  type L[T] = Literal[Formula, T]
-
   /**
    * Here we convert our dag nodes into Literal[Formula, T]
    */
-  def toLiteral = new FunctionK[Formula, L] {
-    def apply[T] = { (form: Formula[T]) =>
-      def recurse[T2](memo: HMap[Formula, L], f: Formula[T2]): (HMap[Formula, L], L[T2]) = memo.get(f) match {
-        case Some(l) => (memo, l)
-        case None => f match {
-          case c @ Constant(_) =>
-            def makeLit[T1](c: Constant[T1]) = {
-              val lit: L[T1] = Literal.Const(c)
-              (memo + (c -> lit), lit)
-            }
-            makeLit(c)
-          case inc @ Inc(_, _) =>
-            def makeLit[T1](i: Inc[T1]) = {
-              val (m1, f1) = recurse(memo, i.in)
-              val lit = Literal.Unary(f1, { f: Formula[T1] => Inc(f, i.by) })
-              (m1 + (i -> lit), lit)
-            }
-            makeLit(inc)
-          case sum @ Sum(_, _) =>
-            def makeLit[T1](s: Sum[T1]) = {
-              val (m1, fl) = recurse(memo, s.left)
-              val (m2, fr) = recurse(m1, s.right)
-              val lit = Literal.Binary(fl, fr, { (f: Formula[T1], g: Formula[T1]) => Sum(f, g) })
-              (m2 + (s -> lit), lit)
-            }
-            makeLit(sum)
-          case prod @ Product(_, _) =>
-            def makeLit[T1](p: Product[T1]) = {
-              val (m1, fl) = recurse(memo, p.left)
-              val (m2, fr) = recurse(m1, p.right)
-              val lit = Literal.Binary(fl, fr, { (f: Formula[T1], g: Formula[T1]) => Product(f, g) })
-              (m2 + (p -> lit), lit)
-            }
-            makeLit(prod)
+  def toLiteral: FunctionK[Formula, Literal[Formula, ?]] =
+    Memoize.functionK[Formula, Literal[Formula, ?]](
+      new Memoize.RecursiveK[Formula, Literal[Formula, ?]] {
+        def toFunction[T] = {
+          case (c @ Constant(_), _) => Literal.Const(c)
+          case (Inc(in, by), f) => Literal.Unary(f(in), Formula.inc(by))
+          case (Sum(lhs, rhs), f) => Literal.Binary(f(lhs), f(rhs), Formula.sum)
+          case (Product(lhs, rhs), f) => Literal.Binary(f(lhs), f(rhs), Formula.product)
         }
-      }
-      recurse(HMap.empty[Formula, L], form)._2
-    }
-  }
+      })
 
   /**
    * Inc(Inc(a, b), c) = Inc(a, b + c)
@@ -181,7 +154,7 @@ object ExpressionDagTests extends Properties("ExpressionDag") {
   property("Node structural equality implies Id equality") = forAll(genForm) { form =>
     val (dag, id) = ExpressionDag(form, toLiteral)
     dag.idToExp.optionMap[BoolT](new FunctionK[HMap[Id, Expr[Formula, ?]]#Pair, Lambda[x => Option[Boolean]]] {
-      def apply[T] = {
+      def toFunction[T] = {
         case (id, expr) =>
           val node = expr.evaluate(dag.idToExp)
           Some(dag.idOf(node) == id)

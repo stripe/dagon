@@ -17,6 +17,8 @@
 
 package com.stripe.dagon
 
+import scala.collection.mutable
+
 sealed trait ExpressionDag[N[_]] { self =>
 
   /**
@@ -67,7 +69,7 @@ sealed trait ExpressionDag[N[_]] { self =>
     type IdSet[t] = Set[Id[_]]
     def expand(s: Set[Id[_]]): Set[Id[_]] = {
       val f = new FunctionK[HMap[Id, Expr[N, ?]]#Pair, Lambda[x => Option[Set[Id[_]]]]] {
-        def apply[T] = {
+        def toFunction[T] = {
           case (id, Expr.Const(_)) if s(id) => Some(s)
           case (id, Expr.Var(v)) if s(id) => Some(s + v)
           case (id, Expr.Unary(id0, _)) if s(id) => Some(s + id0)
@@ -90,7 +92,7 @@ sealed trait ExpressionDag[N[_]] { self =>
   private def gc: ExpressionDag[N] = {
     val goodIds = reachableIds
     val toKeepI2E = idToExp.filter(new FunctionK[HMap[Id, Expr[N, ?]]#Pair, BoolT] {
-      def apply[T] = { case (id, _) => goodIds(id) }
+      def toFunction[T] = { case (id, _) => goodIds(id) }
     })
     copy(id2Exp = toKeepI2E)
   }
@@ -110,6 +112,7 @@ sealed trait ExpressionDag[N[_]] { self =>
     curr
   }
 
+
   /**
    * Convert a N[T] to a Literal[T, N]
    */
@@ -123,7 +126,7 @@ sealed trait ExpressionDag[N[_]] { self =>
     type DagT[T] = ExpressionDag[N]
 
     val f = new FunctionK[HMap[Id, Expr[N, ?]]#Pair, Lambda[x => Option[DagT[x]]]] {
-      def apply[U] = { (kv: (Id[U], Expr[N, U])) =>
+      def toFunction[U] = { (kv: (Id[U], Expr[N, U])) =>
         val (id, _) = kv
         val n1 = evaluate(id)
         rule.apply[U](self)(n1)
@@ -168,7 +171,7 @@ sealed trait ExpressionDag[N[_]] { self =>
     nodeToId.getOrElseUpdate(node, {
       val f = new FunctionK[HMap[Id, Expr[N, ?]]#Pair, Lambda[x => Option[Id[x]]]] {
         // Make sure to return the original Id, not a Id -> Var -> Expr
-        def apply[T1] = { case (thisId, expr) =>
+        def toFunction[T1] = { case (thisId, expr) =>
           if (!expr.isVar && node == expr.evaluate(idToExp)) Some(thisId) else None
         }
       }
@@ -268,7 +271,7 @@ sealed trait ExpressionDag[N[_]] { self =>
    */
   def fanOut(node: N[_]): Int = {
     val pointsToNode = new FunctionK[HMap[Id, Expr[N, ?]]#Pair, Lambda[x => Option[N[x]]]] {
-      def apply[T] = { case (id, expr) => if (dependsOn(expr, node)) Some(evaluate(id)) else None }
+      def toFunction[T] = { case (id, expr) => if (dependsOn(expr, node)) Some(evaluate(id)) else None }
     }
     idToExp.optionMap(pointsToNode).toSet.size
   }

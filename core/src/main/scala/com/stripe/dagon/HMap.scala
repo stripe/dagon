@@ -66,7 +66,7 @@ final class HMap[K[_], V[_]](protected val map: Map[K[_], V[_]]) {
     }.toSet
 
   def optionMap[R[_]](f: FunctionK[Pair, Lambda[x => Option[R[x]]]]): Stream[R[_]] =
-    map.toStream.asInstanceOf[Stream[(K[Any], V[Any])]].flatMap(f.apply.apply(_))
+    map.toStream.asInstanceOf[Stream[(K[Any], V[Any])]].flatMap(f(_))
 }
 
 object HMap {

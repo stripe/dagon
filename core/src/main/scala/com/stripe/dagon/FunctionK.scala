@@ -6,5 +6,8 @@ package com.stripe.dagon
  * For any type X, this type can produce a function from T[X] to R[X].
  */
 trait FunctionK[T[_], R[_]] {
-  def apply[U]: T[U] => R[U]
+  def apply[U](tu: T[U]): R[U] =
+    toFunction[U](tu)
+
+  def toFunction[U]: T[U] => R[U]
 }
