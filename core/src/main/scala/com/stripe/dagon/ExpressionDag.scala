@@ -122,15 +122,18 @@ sealed trait ExpressionDag[N[_]] { self =>
     val f = new FunctionK[HMap[Id, Expr[N, ?]]#Pair, Lambda[x => Option[DagT[x]]]] {
       def apply[U] = { (kv: (Id[U], Expr[N, U])) =>
         val (id, _) = kv
-        rule.apply[U](self)(evaluate(id)).map { n =>
-          val (dag, newId) = ensure(n)
+        val n1 = evaluate(id)
+        rule.apply[U](self)(n1)
+          .filter(_ != n1)
+          .map { n2 =>
+            val (dag, newId) = ensure(n2)
 
-          // We can't delete Ids which may have been shared
-          // publicly, and the ids may be embedded in many
-          // nodes. Instead we remap 'id' to be a pointer
-          // to 'newid'.
-          dag.copy(id2Exp = dag.idToExp + (id -> Expr.Var[N, U](newId))).gc
-        }
+            // We can't delete Ids which may have been shared
+            // publicly, and the ids may be embedded in many
+            // nodes. Instead we remap 'id' to be a pointer
+            // to 'newid'.
+            dag.copy(id2Exp = dag.idToExp + (id -> Expr.Var[N, U](newId))).gc
+          }
       }
     }
 
@@ -169,10 +172,15 @@ sealed trait ExpressionDag[N[_]] { self =>
       }
 
       idToExp.collect(pf) match {
+        case Stream.Empty =>
+          None
         case id #:: Stream.Empty =>
           // this cast is safe if node == expr.evaluate(idToExp) implies types match
           Some(id).asInstanceOf[Option[Id[T]]]
-        case _ => None
+        case _ =>
+          // we'd like to make this an error; there should only ever
+          // be zero or one ids for a node.
+          None //sys.error(s"logic error, should only be one mapping: $node -> $others")
       }
     })
 
@@ -182,8 +190,10 @@ sealed trait ExpressionDag[N[_]] { self =>
    * possibly get this to not compile if it could throw.
    */
   def idOf[T](node: N[T]): Id[T] =
-    find(node)
-      .getOrElse(sys.error("could not get node: %s\n from %s".format(node, this)))
+    find(node).getOrElse {
+      val msg = s"could not get node: $node\n from $this"
+      throw new NoSuchElementException(msg)
+    }
 
   /**
    * ensure the given literal node is present in the Dag
@@ -202,7 +212,7 @@ sealed trait ExpressionDag[N[_]] { self =>
              * check this property with the typesystem easily, check it here
              */
             require(n == node,
-              "Equality or nodeToLiteral is incorrect: nodeToLit(%s) = Const(%s)".format(node, n))
+              s"Equality or nodeToLiteral is incorrect: nodeToLit($node) = Const($n)")
             addExp(node, Expr.Const(n))
           case Literal.Unary(prev, fn) =>
             val (exp1, idprev) = ensure(prev.evaluate)
@@ -221,7 +231,10 @@ sealed trait ExpressionDag[N[_]] { self =>
    * this dag or a parent.
    */
   def evaluate[T](id: Id[T]): N[T] =
-    evaluateOption(id).getOrElse(sys.error("Could not evaluate: %s\nin %s".format(id, this)))
+    evaluateOption(id).getOrElse {
+      val msg = s"Could not evaluate: $id\nin $this"
+      throw new NoSuchElementException(msg)
+    }
 
   def evaluateOption[T](id: Id[T]): Option[N[T]] =
     idToN.getOrElseUpdate(id, {
