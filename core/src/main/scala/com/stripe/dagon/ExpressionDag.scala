@@ -18,22 +18,19 @@
 package com.stripe.dagon
 
 sealed trait ExpressionDag[N[_]] { self =>
-  // Once we fix N above, we can make E[T] = Expr[T, N]
-  type E[t] = Expr[t, N]
-  type Lit[t] = Literal[t, N]
 
   /**
    * These have package visibility to test
    * the law that for all Expr, the node they
    * evaluate to is unique
    */
-  protected[dagon] def idToExp: HMap[Id, E]
-  protected def nodeToLiteral: GenFunction[N, Lit]
+  protected[dagon] def idToExp: HMap[Id, Expr[?, N]]
+  protected def nodeToLiteral: FunctionK[N, Literal[N, ?]]
   protected def roots: Set[Id[_]]
   protected def nextId: Int
 
-  private def copy(id2Exp: HMap[Id, E] = self.idToExp,
-    node2Literal: GenFunction[N, Lit] = self.nodeToLiteral,
+  private def copy(id2Exp: HMap[Id, Expr[?, N]] = self.idToExp,
+    node2Literal: FunctionK[N, Literal[N, ?]] = self.nodeToLiteral,
     gcroots: Set[Id[_]] = self.roots,
     id: Int = self.nextId): ExpressionDag[N] = new ExpressionDag[N] {
     def idToExp = id2Exp
@@ -65,12 +62,12 @@ sealed trait ExpressionDag[N[_]] { self =>
     // This is a constant function at the type level
     type IdSet[t] = Set[Id[_]]
     def expand(s: Set[Id[_]]): Set[Id[_]] = {
-      val partial = new GenPartial[HMap[Id, E]#Pair, IdSet] {
+      val partial = new PartialFunctionK[HMap[Id, Expr[?, N]]#Pair, IdSet] {
         def apply[T] = {
-          case (id, Const(_)) if s(id) => s
-          case (id, Var(v)) if s(id) => s + v
-          case (id, Unary(id0, _)) if s(id) => s + id0
-          case (id, Binary(id0, id1, _)) if s(id) => (s + id0) + id1
+          case (id, Expr.Const(_)) if s(id) => s
+          case (id, Expr.Var(v)) if s(id) => s + v
+          case (id, Expr.Unary(id0, _)) if s(id) => s + id0
+          case (id, Expr.Binary(id0, id1, _)) if s(id) => (s + id0) + id1
         }
       }
       // Note this Stream must always be non-empty as long as roots are
@@ -90,7 +87,7 @@ sealed trait ExpressionDag[N[_]] { self =>
   private def gc: ExpressionDag[N] = {
     val goodIds = reachableIds
     type BoolT[t] = Boolean
-    val toKeepI2E = idToExp.filter(new GenFunction[HMap[Id, E]#Pair, BoolT] {
+    val toKeepI2E = idToExp.filter(new FunctionK[HMap[Id, Expr[?, N]]#Pair, BoolT] {
       def apply[T] = { idExp => goodIds(idExp._1) }
     })
     copy(id2Exp = toKeepI2E)
@@ -114,14 +111,14 @@ sealed trait ExpressionDag[N[_]] { self =>
   /**
    * Convert a N[T] to a Literal[T, N]
    */
-  def toLiteral[T](n: N[T]): Literal[T, N] = nodeToLiteral.apply[T](n)
+  def toLiteral[T](n: N[T]): Literal[N, T] = nodeToLiteral.apply[T](n)
 
   /**
    * apply the rule at the first place that satisfies
    * it, and return from there.
    */
   def applyOnce(rule: Rule[N]): ExpressionDag[N] = {
-    val getN = new GenPartial[HMap[Id, E]#Pair, HMap[Id, N]#Pair] {
+    val getN = new PartialFunctionK[HMap[Id, Expr[?, N]]#Pair, HMap[Id, N]#Pair] {
       def apply[U] = {
         val fn = rule.apply[U](self)
 
@@ -154,7 +151,7 @@ sealed trait ExpressionDag[N[_]] { self =>
            */
           val (i, n) = in
           val (dag, newId) = ensure(n)
-          dag.copy(id2Exp = dag.idToExp + (i -> Var[T, N](newId)))
+          dag.copy(id2Exp = dag.idToExp + (i -> Expr.Var[T, N](newId)))
         }
         // This cast should not be needed
         act(tup.asInstanceOf[HMap[Id, N]#Pair[Any]]).gc
@@ -167,7 +164,7 @@ sealed trait ExpressionDag[N[_]] { self =>
    * Note, Expr must never be a Var
    */
   private def addExp[T](node: N[T], exp: Expr[T, N]): (ExpressionDag[N], Id[T]) = {
-    require(!exp.isInstanceOf[Var[T, N]])
+    require(!exp.isInstanceOf[Expr.Var[T, N]])
 
     find(node) match {
       case None =>
@@ -183,10 +180,10 @@ sealed trait ExpressionDag[N[_]] { self =>
    * to the given N[T]
    */
   def find[T](node: N[T]): Option[Id[T]] = nodeToId.getOrElseUpdate(node, {
-    val partial = new GenPartial[HMap[Id, E]#Pair, Id] {
+    val partial = new PartialFunctionK[HMap[Id, Expr[?, N]]#Pair, Id] {
       def apply[T1] = {
         // Make sure to return the original Id, not a Id -> Var -> Expr
-        case (thisId, expr) if !expr.isInstanceOf[Var[_, N]] && node == expr.evaluate(idToExp) => thisId
+        case (thisId, expr) if !expr.isInstanceOf[Expr.Var[_, N]] && node == expr.evaluate(idToExp) => thisId
       }
     }
     idToExp.collect(partial).toList match {
@@ -217,23 +214,23 @@ sealed trait ExpressionDag[N[_]] { self =>
     find(node) match {
       case Some(id) => (this, id)
       case None => {
-        val lit: Lit[T] = toLiteral(node)
+        val lit: Literal[N, T] = toLiteral(node)
         lit match {
-          case ConstLit(n) =>
+          case Literal.Const(n) =>
             /**
              * Since the code is not performance critical, but correctness critical, and we can't
              * check this property with the typesystem easily, check it here
              */
             require(n == node,
-              "Equality or nodeToLiteral is incorrect: nodeToLit(%s) = ConstLit(%s)".format(node, n))
-            addExp(node, Const(n))
-          case UnaryLit(prev, fn) =>
+              "Equality or nodeToLiteral is incorrect: nodeToLit(%s) = Const(%s)".format(node, n))
+            addExp(node, Expr.Const(n))
+          case Literal.Unary(prev, fn) =>
             val (exp1, idprev) = ensure(prev.evaluate)
-            exp1.addExp(node, Unary(idprev, fn))
-          case BinaryLit(n1, n2, fn) =>
+            exp1.addExp(node, Expr.Unary(idprev, fn))
+          case Literal.Binary(n1, n2, fn) =>
             val (exp1, id1) = ensure(n1.evaluate)
             val (exp2, id2) = exp1.ensure(n2.evaluate)
-            exp2.addExp(node, Binary(id1, id2, fn))
+            exp2.addExp(node, Expr.Binary(id1, id2, fn))
         }
       }
     }
@@ -265,10 +262,10 @@ sealed trait ExpressionDag[N[_]] { self =>
 
   @annotation.tailrec
   private def dependsOn(expr: Expr[_, N], node: N[_]): Boolean = expr match {
-    case Const(_) => false
-    case Var(id) => dependsOn(idToExp(id), node)
-    case Unary(id, _) => evaluate(id) == node
-    case Binary(id0, id1, _) => evaluate(id0) == node || evaluate(id1) == node
+    case Expr.Const(_) => false
+    case Expr.Var(id) => dependsOn(idToExp(id), node)
+    case Expr.Unary(id, _) => evaluate(id) == node
+    case Expr.Binary(id0, id1, _) => evaluate(id0) == node || evaluate(id1) == node
   }
 
   /**
@@ -276,7 +273,7 @@ sealed trait ExpressionDag[N[_]] { self =>
    * use .contains(n) to check for containment
    */
   def fanOut(node: N[_]): Int = {
-    val pointsToNode = new GenPartial[HMap[Id, E]#Pair, N] {
+    val pointsToNode = new PartialFunctionK[HMap[Id, Expr[?, N]]#Pair, N] {
       def apply[T] = {
         case (id, expr) if dependsOn(expr, node) => evaluate(id)
       }
@@ -287,7 +284,7 @@ sealed trait ExpressionDag[N[_]] { self =>
 }
 
 object ExpressionDag {
-  private def empty[N[_]](n2l: GenFunction[N, ({ type L[t] = Literal[t, N] })#L]): ExpressionDag[N] =
+  private def empty[N[_]](n2l: FunctionK[N, Literal[N, ?]]): ExpressionDag[N] =
     new ExpressionDag[N] {
       val idToExp = HMap.empty[Id, ({ type E[t] = Expr[t, N] })#E]
       val nodeToLiteral = n2l
@@ -299,7 +296,7 @@ object ExpressionDag {
    * This creates a new ExpressionDag rooted at the given tail node
    */
   def apply[T, N[_]](n: N[T],
-    nodeToLit: GenFunction[N, ({ type L[t] = Literal[t, N] })#L]): (ExpressionDag[N], Id[T]) = {
+    nodeToLit: FunctionK[N, Literal[N, ?]]): (ExpressionDag[N], Id[T]) = {
     val (dag, id) = empty(nodeToLit).ensure(n)
     (dag.addRoot(id), id)
   }
@@ -310,7 +307,7 @@ object ExpressionDag {
    * equivalent under the given rule
    */
   def applyRule[T, N[_]](n: N[T],
-    nodeToLit: GenFunction[N, ({ type L[t] = Literal[t, N] })#L],
+    nodeToLit: FunctionK[N, Literal[N, ?]],
     rule: Rule[N]): N[T] = {
     val (dag, id) = apply(n, nodeToLit)
     dag(rule).evaluate(id)

@@ -49,16 +49,21 @@ sealed trait Expr[T, N[_]] {
   def evaluate(idToExp: HMap[Id, ({ type E[t] = Expr[t, N] })#E]): N[T] =
     Expr.evaluate(idToExp, this)
 }
-case class Const[T, N[_]](value: N[T]) extends Expr[T, N] {
-  override def evaluate(idToExp: HMap[Id, ({ type E[t] = Expr[t, N] })#E]): N[T] = value
-}
-case class Var[T, N[_]](name: Id[T]) extends Expr[T, N]
-case class Unary[T1, T2, N[_]](arg: Id[T1], fn: N[T1] => N[T2]) extends Expr[T2, N]
-case class Binary[T1, T2, T3, N[_]](arg1: Id[T1],
-  arg2: Id[T2],
-  fn: (N[T1], N[T2]) => N[T3]) extends Expr[T3, N]
 
 object Expr {
+
+  case class Const[T, N[_]](value: N[T]) extends Expr[T, N] {
+    override def evaluate(idToExp: HMap[Id, ({ type E[t] = Expr[t, N] })#E]): N[T] = value
+  }
+
+  case class Var[T, N[_]](name: Id[T]) extends Expr[T, N]
+
+  case class Unary[T1, T2, N[_]](arg: Id[T1], fn: N[T1] => N[T2]) extends Expr[T2, N]
+
+  case class Binary[T1, T2, T3, N[_]](arg1: Id[T1],
+    arg2: Id[T2],
+    fn: (N[T1], N[T2]) => N[T3]) extends Expr[T3, N]
+
   def evaluate[T, N[_]](idToExp: HMap[Id, ({ type E[t] = Expr[t, N] })#E], expr: Expr[T, N]): N[T] =
     evaluate(idToExp, HMap.empty[({ type E[t] = Expr[t, N] })#E, N], expr)._2
 

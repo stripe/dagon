@@ -67,26 +67,26 @@ object ExpressionDagTests extends Properties("ExpressionDag") {
     right <- Gen.oneOf(genForm, Gen.oneOf(left.closure.toSeq))
   } yield Product(left, right)
 
-  type L[T] = Literal[T, Formula]
+  type L[T] = Literal[Formula, T]
 
   /**
    * Here we convert our dag nodes into Literal[Formula, T]
    */
-  def toLiteral = new GenFunction[Formula, L] {
+  def toLiteral = new FunctionK[Formula, L] {
     def apply[T] = { (form: Formula[T]) =>
       def recurse[T2](memo: HMap[Formula, L], f: Formula[T2]): (HMap[Formula, L], L[T2]) = memo.get(f) match {
         case Some(l) => (memo, l)
         case None => f match {
           case c @ Constant(_) =>
             def makeLit[T1](c: Constant[T1]) = {
-              val lit: L[T1] = ConstLit(c)
+              val lit: L[T1] = Literal.Const(c)
               (memo + (c -> lit), lit)
             }
             makeLit(c)
           case inc @ Inc(_, _) =>
             def makeLit[T1](i: Inc[T1]) = {
               val (m1, f1) = recurse(memo, i.in)
-              val lit = UnaryLit(f1, { f: Formula[T1] => Inc(f, i.by) })
+              val lit = Literal.Unary(f1, { f: Formula[T1] => Inc(f, i.by) })
               (m1 + (i -> lit), lit)
             }
             makeLit(inc)
@@ -94,7 +94,7 @@ object ExpressionDagTests extends Properties("ExpressionDag") {
             def makeLit[T1](s: Sum[T1]) = {
               val (m1, fl) = recurse(memo, s.left)
               val (m2, fr) = recurse(m1, s.right)
-              val lit = BinaryLit(fl, fr, { (f: Formula[T1], g: Formula[T1]) => Sum(f, g) })
+              val lit = Literal.Binary(fl, fr, { (f: Formula[T1], g: Formula[T1]) => Sum(f, g) })
               (m2 + (s -> lit), lit)
             }
             makeLit(sum)
@@ -102,7 +102,7 @@ object ExpressionDagTests extends Properties("ExpressionDag") {
             def makeLit[T1](p: Product[T1]) = {
               val (m1, fl) = recurse(memo, p.left)
               val (m2, fr) = recurse(m1, p.right)
-              val lit = BinaryLit(fl, fr, { (f: Formula[T1], g: Formula[T1]) => Product(f, g) })
+              val lit = Literal.Binary(fl, fr, { (f: Formula[T1], g: Formula[T1]) => Product(f, g) })
               (m2 + (p -> lit), lit)
             }
             makeLit(prod)
@@ -162,7 +162,7 @@ object ExpressionDagTests extends Properties("ExpressionDag") {
   property("Node structural equality implies Id equality") = forAll(genForm) { form =>
     val (dag, id) = ExpressionDag(form, toLiteral)
     type BoolT[T] = Boolean // constant type function
-    dag.idToExp.collect(new GenPartial[HMap[Id, ExpressionDag[Formula]#E]#Pair, BoolT] {
+    dag.idToExp.collect(new PartialFunctionK[HMap[Id, Expr[?, Formula]]#Pair, BoolT] {
       def apply[T] = {
         case (id, expr) =>
           val node = expr.evaluate(dag.idToExp)

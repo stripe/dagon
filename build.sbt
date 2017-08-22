@@ -12,6 +12,7 @@ lazy val dagonSettings = Seq(
   scalaVersion := "2.12.3",
   crossScalaVersions := Seq("2.10.6", "2.11.11", "2.12.3"),
   libraryDependencies ++= Seq(
+    compilerPlugin("org.spire-math" %% "kind-projector" % "0.9.4"),
     "org.scalatest" %%% "scalatest" % "3.0.3" % Test,
     "org.scalacheck" %%% "scalacheck" % "1.13.5" % Test),
   scalacOptions ++= Seq(

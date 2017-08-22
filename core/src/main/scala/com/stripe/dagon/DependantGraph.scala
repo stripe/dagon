@@ -17,6 +17,8 @@
 
 package com.stripe.dagon
 
+import Graphs._
+
 /**
  * Given Dag and a List of immutable nodes, and a function to get
  * dependencies, compute the dependants (reverse the graph)

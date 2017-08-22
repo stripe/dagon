@@ -46,7 +46,7 @@ sealed abstract class HMap[K[_], V[_]] {
 
   def contains[T](id: K[T]): Boolean = get(id).isDefined
 
-  def filter(pred: GenFunction[Pair, ({ type BoolT[T] = Boolean })#BoolT]): HMap[K, V] = {
+  def filter(pred: FunctionK[Pair, ({ type BoolT[T] = Boolean })#BoolT]): HMap[K, V] = {
     val filtered = map.asInstanceOf[Map[K[Any], V[Any]]].filter(pred.apply[Any])
     HMap.from[K, V](filtered.asInstanceOf[Map[K[_], V[_]]])
   }
@@ -61,7 +61,7 @@ sealed abstract class HMap[K[_], V[_]] {
 
   // go through all the keys, and find the first key that matches this
   // function and apply
-  def updateFirst(p: GenPartial[K, V]): Option[(HMap[K, V], K[_])] = {
+  def updateFirst(p: PartialFunctionK[K, V]): Option[(HMap[K, V], K[_])] = {
     def collector[T]: PartialFunction[(K[T], V[T]), (K[T], V[T])] = {
       val pf = p.apply[T]
 
@@ -78,20 +78,11 @@ sealed abstract class HMap[K[_], V[_]] {
       }
   }
 
-  def collect[R[_]](p: GenPartial[Pair, R]): Stream[R[_]] =
+  def collect[R[_]](p: PartialFunctionK[Pair, R]): Stream[R[_]] =
     map.toStream.asInstanceOf[Stream[(K[Any], V[Any])]].collect(p.apply)
 
-  def collectValues[R[_]](p: GenPartial[V, R]): Stream[R[_]] =
+  def collectValues[R[_]](p: PartialFunctionK[V, R]): Stream[R[_]] =
     map.values.toStream.asInstanceOf[Stream[V[Any]]].collect(p.apply)
-}
-
-// This is a function that preserves the inner type
-trait GenFunction[T[_], R[_]] {
-  def apply[U]: (T[U] => R[U])
-}
-
-trait GenPartial[T[_], R[_]] {
-  def apply[U]: PartialFunction[T[U], R[U]]
 }
 
 object HMap {
@@ -99,25 +90,3 @@ object HMap {
   private def from[K[_], V[_]](m: Map[K[_], V[_]]): HMap[K, V] =
     new HMap[K, V] { override val map = m }
 }
-
-/**
- * This is a useful cache for memoizing heterogenously types functions
- */
-class HCache[K[_], V[_]]() {
-  private var hmap: HMap[K, V] = HMap.empty[K, V]
-
-  /**
-   * Get snapshot of the current state
-   */
-  def snapshot: HMap[K, V] = hmap
-
-  def getOrElseUpdate[T](k: K[T], v: => V[T]): V[T] =
-    hmap.get(k) match {
-      case Some(exists) => exists
-      case None =>
-        val res = v
-        hmap = hmap + (k -> res)
-        res
-    }
-}
-

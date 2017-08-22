@@ -77,7 +77,7 @@ object HMapTests extends Properties("HMap") {
   }
 
   property("updateFirst works") = forAll { (hmap: HMap[Key, Value]) =>
-    val partial = new GenPartial[Key, Value] {
+    val partial = new PartialFunctionK[Key, Value] {
       def apply[T] = { case Key(id) if (id % 2 == 0) => Value(0) }
     }
     hmap.updateFirst(partial) match {
@@ -88,7 +88,7 @@ object HMapTests extends Properties("HMap") {
 
   property("collect works") = forAll { (map: Map[Key[Int], Value[Int]]) =>
     val hm = map.foldLeft(HMap.empty[Key, Value])(_ + _)
-    val partial = new GenPartial[HMap[Key, Value]#Pair, Value] {
+    val partial = new PartialFunctionK[HMap[Key, Value]#Pair, Value] {
       def apply[T] = { case (Key(k), Value(v)) if k > v => Value(k * v) }
     }
     val collected = hm.collect(partial).map { case Value(v) => v }.toSet
@@ -98,7 +98,7 @@ object HMapTests extends Properties("HMap") {
 
   property("collectValues works") = forAll { (map: Map[Key[Int], Value[Int]]) =>
     val hm = map.foldLeft(HMap.empty[Key, Value])(_ + _)
-    val partial = new GenPartial[Value, Value] {
+    val partial = new PartialFunctionK[Value, Value] {
       def apply[T] = { case Value(v) if v < 0 => Value(v * v) }
     }
     val collected = hm.collectValues(partial).map { case Value(v) => v }.toSet
