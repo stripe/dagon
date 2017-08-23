@@ -17,8 +17,6 @@
 
 package com.stripe.dagon
 
-import scala.collection.mutable
-
 sealed trait ExpressionDag[N[_]] { self =>
 
   /**

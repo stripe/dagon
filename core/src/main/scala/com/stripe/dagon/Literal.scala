@@ -8,7 +8,6 @@ sealed trait Literal[N[_], T] {
   def evaluate: N[T] = Literal.evaluate(this)
 }
 
-
 object Literal {
 
   case class Const[N[_], T](override val evaluate: N[T])
@@ -26,25 +25,20 @@ object Literal {
    * equivalent structures (not just structurally equivalent)
    */
   def evaluate[N[_], T](lit: Literal[N, T]): N[T] =
-    evaluate(HMap.empty[Literal[N, ?], N], lit)._2
+    evaluateMemo[N](lit)
 
-  // Memoized version of the above to handle diamonds
-  private def evaluate[N[_], T](hm: HMap[Literal[N, ?], N], lit: Literal[N, T]): (HMap[Literal[N, ?], N], N[T]) =
-    hm.get(lit) match {
-      case Some(prod) => (hm, prod)
-      case None =>
-        lit match {
-          case Const(prod) => (hm + (lit -> prod), prod)
-          case Unary(in, fn) =>
-            val (h1, p1) = evaluate(hm, in)
-            val p2 = fn(p1)
-            (h1 + (lit -> p2), p2)
-          case Binary(in1, in2, fn) =>
-            val (h1, p1) = evaluate(hm, in1)
-            val (h2, p2) = evaluate(h1, in2)
-            val p3 = fn(p1, p2)
-            (h2 + (lit -> p3), p3)
-        }
-    }
+  /**
+   * Memoized version of evaluation to handle diamonds
+   *
+   * Each call to this creates a new internal memo.
+   */
+  def evaluateMemo[N[_]]: FunctionK[Literal[N, ?], N] =
+    Memoize.functionK[Literal[N, ?], N](new Memoize.RecursiveK[Literal[N, ?], N] {
+      def toFunction[T] = {
+        case (Const(n), _) => n
+        case (Unary(n, fn), rec) => fn(rec(n))
+        case (Binary(n1, n2, fn), rec) => fn(rec(n1), rec(n2))
+      }
+    })
 }
 

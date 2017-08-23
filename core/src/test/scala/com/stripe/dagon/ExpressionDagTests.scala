@@ -18,7 +18,7 @@
 package com.stripe.dagon
 
 import org.scalacheck.Prop._
-import org.scalacheck.{ Gen, Prop, Properties, Test }
+import org.scalacheck.{ Gen, Prop, Properties }
 
 object ExpressionDagTests extends Properties("ExpressionDag") {
 
@@ -197,13 +197,13 @@ object ExpressionDagTests extends Properties("ExpressionDag") {
 
   property("Crush down explicit diamond") = forAll { (xs0: List[Int], ys0: List[Int]) =>
     val a = Formula(123)
-  
+
     // ensure that we won't ever use the same constant on the LHS and RHS
     // because we want all our inc nodes to fan out to only one other node.
     def munge(xs: List[Int]): List[Int] = xs.take(10).map(_ % 10)
     val (xs, ys) = (munge(0 :: xs0), munge(0 :: ys0).map(_ + 1000))
     val (x, y) = (xs.sum, ys.sum)
-  
+
     val complex = xs.foldLeft(a)(_ inc _) + ys.foldLeft(a)(_ inc _)
     val expected = a.inc(x) + a.inc(y)
     testRule(complex, expected, CombineInc)

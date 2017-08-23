@@ -28,7 +28,7 @@ object Memoize {
   type RecursiveK[A[_], B[_]] = FunctionK[Lambda[x => (A[x], FunctionK[A, B])], B]
 
   /**
-   * 
+   * Memoize a FunctionK using an HCache internally.
    */
   def functionK[A[_], B[_]](f: RecursiveK[A, B]): FunctionK[A, B] = {
     val hcache = HCache.empty[A, B]
@@ -39,5 +39,4 @@ object Memoize {
     }
     hg
   }
-  
 }
