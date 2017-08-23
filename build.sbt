@@ -2,22 +2,19 @@ import ReleaseTransformations._
 
 import com.typesafe.tools.mima.plugin.MimaPlugin.mimaDefaultSettings
 
-lazy val noPublish = Seq(
-  publish := {},
-  publishLocal := {},
-  publishArtifact := false)
+lazy val noPublish = Seq(publish := {}, publishLocal := {}, publishArtifact := false)
 
 lazy val dagonSettings = Seq(
   organization := "com.stripe",
   scalaVersion := "2.12.3",
   crossScalaVersions := Seq("2.10.6", "2.11.11", "2.12.3"),
-  libraryDependencies ++= Seq(
-    compilerPlugin("org.spire-math" %% "kind-projector" % "0.9.4"),
-    "org.scalatest" %%% "scalatest" % "3.0.3" % Test,
-    "org.scalacheck" %%% "scalacheck" % "1.13.5" % Test),
+  libraryDependencies ++= Seq(compilerPlugin("org.spire-math" %% "kind-projector" % "0.9.4"),
+                              "org.scalatest" %%% "scalatest" % "3.0.3" % Test,
+                              "org.scalacheck" %%% "scalacheck" % "1.13.5" % Test),
   scalacOptions ++= Seq(
     "-deprecation",
-    "-encoding", "UTF-8",
+    "-encoding",
+    "UTF-8",
     "-feature",
     "-language:existentials",
     "-language:higherKinds",
@@ -30,13 +27,13 @@ lazy val dagonSettings = Seq(
     "-Ywarn-dead-code",
     "-Ywarn-numeric-widen",
     "-Ywarn-value-discard",
-    "-Xfuture"),
+    "-Xfuture"
+  ),
   // HACK: without these lines, the console is basically unusable,
   // since all imports are reported as being unused (and then become
   // fatal errors).
-  scalacOptions in (Compile, console) ~= {_.filterNot("-Xlint" == _)},
+  scalacOptions in (Compile, console) ~= { _.filterNot("-Xlint" == _) },
   scalacOptions in (Test, console) := (scalacOptions in (Compile, console)).value,
-
   // release stuff
   releaseCrossBuild := true,
   releasePublishArtifactsAction := PgpKeys.publishSigned.value,
@@ -55,7 +52,8 @@ lazy val dagonSettings = Seq(
     setNextVersion,
     commitNextVersion,
     ReleaseStep(action = Command.process("sonatypeReleaseAll", _)),
-    pushChanges),
+    pushChanges
+  ),
   publishTo := {
     val nexus = "https://oss.sonatype.org/"
     if (isSnapshot.value)
@@ -91,7 +89,8 @@ lazy val dagonSettings = Seq(
     </developers>
   ),
   coverageMinimum := 60,
-  coverageFailOnMinimum := false) ++ mimaDefaultSettings
+  coverageFailOnMinimum := false
+) ++ mimaDefaultSettings
 
 def previousArtifact(proj: String) =
   "com.stripe" %% s"dagon-$proj" % "0.1.0"
@@ -105,7 +104,9 @@ lazy val commonJsSettings = Seq(
   requiresDOM := false,
   jsEnv := new org.scalajs.jsenv.nodejs.NodeJSEnv(),
   // batch mode decreases the amount of memory needed to compile scala.js code
-  scalaJSOptimizerOptions := scalaJSOptimizerOptions.value.withBatchMode(scala.sys.env.get("TRAVIS").isDefined))
+  scalaJSOptimizerOptions := scalaJSOptimizerOptions.value.withBatchMode(
+    scala.sys.env.get("TRAVIS").isDefined)
+)
 
 lazy val dagon = project
   .in(file("."))
@@ -132,39 +133,41 @@ lazy val dagonJS = project
   .dependsOn(coreJS, catsJS)
   .enablePlugins(ScalaJSPlugin)
 
-lazy val core = crossProject.crossType(CrossType.Pure)
+lazy val core = crossProject
+  .crossType(CrossType.Pure)
   .in(file("core"))
   .settings(name := "dagon-core")
   .settings(moduleName := "dagon-core")
   .settings(dagonSettings: _*)
   .settings(mimaPreviousArtifacts := Set(previousArtifact("core")))
   .disablePlugins(JmhPlugin)
-  .jsSettings(commonJsSettings:_*)
+  .jsSettings(commonJsSettings: _*)
   .jsSettings(coverageEnabled := false)
-  .jvmSettings(commonJvmSettings:_*)
+  .jvmSettings(commonJvmSettings: _*)
 
 lazy val coreJVM = core.jvm
 lazy val coreJS = core.js
 
-lazy val cats = crossProject.crossType(CrossType.Pure)
+lazy val cats = crossProject
+  .crossType(CrossType.Pure)
   .in(file("cats"))
   .dependsOn(core % "compile->compile;test->test")
   .settings(name := "dagon-cats")
   .settings(moduleName := "dagon-cats")
   .settings(dagonSettings: _*)
-  .settings(libraryDependencies ++= Seq(
-    "org.typelevel" %%% "cats-core" % "0.9.0",
-    "org.typelevel" %%% "cats-laws" % "0.9.0" % Test))
+  .settings(libraryDependencies ++= Seq("org.typelevel" %%% "cats-core" % "0.9.0",
+                                        "org.typelevel" %%% "cats-laws" % "0.9.0" % Test))
   .settings(mimaPreviousArtifacts := Set(previousArtifact("cats")))
   .disablePlugins(JmhPlugin)
-  .jsSettings(commonJsSettings:_*)
+  .jsSettings(commonJsSettings: _*)
   .jsSettings(coverageEnabled := false)
-  .jvmSettings(commonJvmSettings:_*)
+  .jvmSettings(commonJvmSettings: _*)
 
 lazy val catsJVM = cats.jvm
 lazy val catsJS = cats.js
 
-lazy val benchmark = project.in(file("benchmark"))
+lazy val benchmark = project
+  .in(file("benchmark"))
   .dependsOn(coreJVM, catsJVM)
   .settings(name := "dagon-benchmark")
   .settings(dagonSettings: _*)
@@ -172,7 +175,8 @@ lazy val benchmark = project.in(file("benchmark"))
   .settings(coverageEnabled := false)
   .enablePlugins(JmhPlugin)
 
-lazy val docs = project.in(file("docs"))
+lazy val docs = project
+  .in(file("docs"))
   .dependsOn(coreJVM, catsJVM)
   .settings(name := "dagon-docs")
   .settings(dagonSettings: _*)

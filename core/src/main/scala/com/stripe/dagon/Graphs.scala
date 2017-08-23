@@ -10,15 +10,16 @@ object Graphs {
    */
   def depthFirstOf[T](t: T)(nf: NeighborFn[T]): List[T] = {
     @annotation.tailrec
-    def loop(stack: List[T], deps: List[T], acc: Set[T]): List[T] = {
+    def loop(stack: List[T], deps: List[T], acc: Set[T]): List[T] =
       stack match {
         case Nil => deps
         case h :: tail =>
-          val newStack = nf(h).filterNot(acc).foldLeft(tail) { (s, it) => it :: s }
+          val newStack = nf(h).filterNot(acc).foldLeft(tail) { (s, it) =>
+            it :: s
+          }
           val newDeps = if (acc(h)) deps else h :: deps
           loop(newStack, newDeps, acc + h)
       }
-    }
     val start = nf(t).toList
     loop(start, start.distinct, start.toSet).reverse
   }
@@ -32,12 +33,12 @@ object Graphs {
   def reversed[T](nodes: Iterable[T])(nf: NeighborFn[T]): NeighborFn[T] = {
     val graph: Map[T, List[T]] = nodes
       .foldLeft(Map.empty[T, List[T]]) { (g, child) =>
-      val gWithChild = g + (child -> g.getOrElse(child, Nil))
-      nf(child).foldLeft(gWithChild) { (innerg, parent) =>
-        innerg + (parent -> (child :: innerg.getOrElse(parent, Nil)))
+        val gWithChild = g + (child -> g.getOrElse(child, Nil))
+        nf(child).foldLeft(gWithChild) { (innerg, parent) =>
+          innerg + (parent -> (child :: innerg.getOrElse(parent, Nil)))
+        }
       }
-    }
-    // make sure the values are sets, not .mapValues is lazy in scala
+      // make sure the values are sets, not .mapValues is lazy in scala
       .map { case (k, v) => (k, v.distinct) }
 
     graph.getOrElse(_, Nil)

@@ -14,22 +14,21 @@ object Example {
   case class Var[T](name: String) extends Eqn[T]
   case class Negate[T](eqn: Eqn[T]) extends Eqn[T]
   case class Add[T](lhs: Eqn[T], rhs: Eqn[T]) extends Eqn[T]
-  
+
   object Eqn {
     def negate[T]: Eqn[T] => Eqn[T] = Negate(_)
     def add[T]: (Eqn[T], Eqn[T]) => Eqn[T] = Add(_, _)
   }
 
   val toLiteral: FunctionK[Eqn, Literal[Eqn, ?]] =
-    Memoize.functionK[Eqn, Literal[Eqn, ?]](
-      new Memoize.RecursiveK[Eqn, Literal[Eqn, ?]] {
-        def toFunction[T] = {
-          case (c @ Const(_), f) => Literal.Const(c)
-          case (v @ Var(_), f) => Literal.Const(v)
-          case (Negate(x), f) => Literal.Unary(f(x), Eqn.negate)
-          case (Add(x, y), f) => Literal.Binary(f(x), f(y), Eqn.add)
-        }
-      })
+    Memoize.functionK[Eqn, Literal[Eqn, ?]](new Memoize.RecursiveK[Eqn, Literal[Eqn, ?]] {
+      def toFunction[T] = {
+        case (c @ Const(_), f) => Literal.Const(c)
+        case (v @ Var(_), f) => Literal.Const(v)
+        case (Negate(x), f) => Literal.Unary(f(x), Eqn.negate)
+        case (Add(x, y), f) => Literal.Binary(f(x), f(y), Eqn.add)
+      }
+    })
 
   object SimplifyNegation extends PartialRule[Eqn] {
     def applyWhere[T](on: ExpressionDag[Eqn]) = {

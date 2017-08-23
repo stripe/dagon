@@ -48,6 +48,7 @@ abstract class DependantGraph[T] {
     if (isNode(p)) Some(graph(p).toList) else None
 
   def fanOut(p: T): Option[Int] = dependantsOf(p).map { _.size }
+
   /**
    * Return all dependendants of a given node.
    * Does not include itself

@@ -18,7 +18,7 @@
 package com.stripe.dagon
 
 import org.scalacheck.Prop._
-import org.scalacheck.{ Arbitrary, Gen, Properties }
+import org.scalacheck.{Arbitrary, Gen, Properties}
 
 /**
  * This tests the HMap. We use the type system to
@@ -32,10 +32,11 @@ object HMapTests extends Properties("HMap") {
   implicit def keyGen: Gen[Key[Int]] = Gen.choose(Int.MinValue, Int.MaxValue).map(Key(_))
   implicit def valGen: Gen[Value[Int]] = Gen.choose(Int.MinValue, Int.MaxValue).map(Value(_))
 
-  def zip[T, U](g: Gen[T], h: Gen[U]): Gen[(T, U)] = for {
-    a <- g
-    b <- h
-  } yield (a, b)
+  def zip[T, U](g: Gen[T], h: Gen[U]): Gen[(T, U)] =
+    for {
+      a <- g
+      b <- h
+    } yield (a, b)
 
   implicit def hmapGen: Gen[HMap[Key, Value]] =
     Gen.listOf(zip(keyGen, valGen)).map { list =>
@@ -46,11 +47,12 @@ object HMapTests extends Properties("HMap") {
 
   implicit def arb[T](implicit g: Gen[T]): Arbitrary[T] = Arbitrary(g)
 
-  property("adding a pair works") = forAll { (hmap: HMap[Key, Value], k: Key[Int], v: Value[Int]) =>
-    val initContains = hmap.contains(k)
-    val added = hmap + (k -> v)
-    // Adding puts the item in, and does not change the initial
-    (added.get(k) == Some(v)) &&
+  property("adding a pair works") = forAll {
+    (hmap: HMap[Key, Value], k: Key[Int], v: Value[Int]) =>
+      val initContains = hmap.contains(k)
+      val added = hmap + (k -> v)
+      // Adding puts the item in, and does not change the initial
+      (added.get(k) == Some(v)) &&
       (initContains == hmap.contains(k)) &&
       (initContains == hmap.get(k).isDefined)
   }
@@ -59,8 +61,8 @@ object HMapTests extends Properties("HMap") {
     val next = hmap - k
     // Adding puts the item in, and does not change the initial
     (!next.contains(k)) &&
-      (initContains == hmap.contains(k)) &&
-      (next.get(k) == None)
+    (initContains == hmap.contains(k)) &&
+    (next.get(k) == None)
   }
 
   property("keysOf works") = forAll { (hmap: HMap[Key, Value], k: Key[Int], v: Value[Int]) =>

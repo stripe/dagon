@@ -18,7 +18,7 @@
 package com.stripe.dagon
 
 import org.scalacheck.Prop._
-import org.scalacheck.{ Gen, Prop, Properties }
+import org.scalacheck.{Gen, Prop, Properties}
 
 object ExpressionDagTests extends Properties("ExpressionDag") {
 
@@ -64,31 +64,30 @@ object ExpressionDagTests extends Properties("ExpressionDag") {
     (got == expected) :| s"$got == $expected"
   }
 
-
-  def genForm: Gen[Formula[Int]] = Gen.frequency(
-    (1, genProd),
-    (1, genSum),
-    (4, genInc),
-    (4, genConst))
+  def genForm: Gen[Formula[Int]] =
+    Gen.frequency((1, genProd), (1, genSum), (4, genInc), (4, genConst))
 
   def genConst: Gen[Formula[Int]] = Gen.chooseNum(Int.MinValue, Int.MaxValue).map(Constant(_))
 
-  def genInc: Gen[Formula[Int]] = for {
-    by <- Gen.chooseNum(Int.MinValue, Int.MaxValue)
-    f <- Gen.lzy(genForm)
-  } yield Inc(f, by)
+  def genInc: Gen[Formula[Int]] =
+    for {
+      by <- Gen.chooseNum(Int.MinValue, Int.MaxValue)
+      f <- Gen.lzy(genForm)
+    } yield Inc(f, by)
 
-  def genSum: Gen[Formula[Int]] = for {
-    left <- Gen.lzy(genForm)
-    // We have to make dags, so select from the closure of left sometimes
-    right <- Gen.oneOf(genForm, Gen.oneOf(left.closure.toSeq))
-  } yield Sum(left, right)
+  def genSum: Gen[Formula[Int]] =
+    for {
+      left <- Gen.lzy(genForm)
+      // We have to make dags, so select from the closure of left sometimes
+      right <- Gen.oneOf(genForm, Gen.oneOf(left.closure.toSeq))
+    } yield Sum(left, right)
 
-  def genProd: Gen[Formula[Int]] = for {
-    left <- Gen.lzy(genForm)
-    // We have to make dags, so select from the closure of left sometimes
-    right <- Gen.oneOf(genForm, Gen.oneOf(left.closure.toSeq))
-  } yield Product(left, right)
+  def genProd: Gen[Formula[Int]] =
+    for {
+      left <- Gen.lzy(genForm)
+      // We have to make dags, so select from the closure of left sometimes
+      right <- Gen.oneOf(genForm, Gen.oneOf(left.closure.toSeq))
+    } yield Product(left, right)
 
   /**
    * Here we convert our dag nodes into Literal[Formula, T]
@@ -153,22 +152,26 @@ object ExpressionDagTests extends Properties("ExpressionDag") {
    */
   property("Node structural equality implies Id equality") = forAll(genForm) { form =>
     val (dag, id) = ExpressionDag(form, toLiteral)
-    dag.idToExp.optionMap[BoolT](new FunctionK[HMap[Id, Expr[Formula, ?]]#Pair, Lambda[x => Option[Boolean]]] {
-      def toFunction[T] = {
-        case (id, expr) =>
-          val node = expr.evaluate(dag.idToExp)
-          Some(dag.idOf(node) == id)
-        case _ =>
-          None
-      }
-    }).forall(identity)
+    dag.idToExp
+      .optionMap[BoolT](
+        new FunctionK[HMap[Id, Expr[Formula, ?]]#Pair, Lambda[x => Option[Boolean]]] {
+          def toFunction[T] = {
+            case (id, expr) =>
+              val node = expr.evaluate(dag.idToExp)
+              Some(dag.idOf(node) == id)
+            case _ =>
+              None
+          }
+        })
+      .forall(identity)
   }
 
   // The normal Inc gen recursively calls the general dag Generator
-  def genChainInc: Gen[Formula[Int]] = for {
-    by <- Gen.chooseNum(Int.MinValue, Int.MaxValue)
-    chain <- genChain
-  } yield Inc(chain, by)
+  def genChainInc: Gen[Formula[Int]] =
+    for {
+      by <- Gen.chooseNum(Int.MinValue, Int.MaxValue)
+      chain <- genChain
+    } yield Inc(chain, by)
 
   def genChain: Gen[Formula[Int]] = Gen.frequency((1, genConst), (3, genChainInc))
 
@@ -213,10 +216,12 @@ object ExpressionDagTests extends Properties("ExpressionDag") {
     // Make sure we have a set of distinct nodes
     val tails = (n1 :: ns).zipWithIndex.map { case (i, idx) => Formula(i).inc(idx) }
 
-    val (dag, roots) = tails.foldLeft((ExpressionDag.empty[Formula](toLiteral), Set.empty[Id[_]])) { case ((d, s), f) =>
-      val (dnext, id) = d.addRoot(f)
-      (dnext, s + id)
-    }
+    val (dag, roots) =
+      tails.foldLeft((ExpressionDag.empty[Formula](toLiteral), Set.empty[Id[_]])) {
+        case ((d, s), f) =>
+          val (dnext, id) = d.addRoot(f)
+          (dnext, s + id)
+      }
 
     roots.forall(dag.fanOut(_) == 1)
   }

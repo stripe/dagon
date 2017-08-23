@@ -10,13 +10,13 @@ sealed trait Literal[N[_], T] {
 
 object Literal {
 
-  case class Const[N[_], T](override val evaluate: N[T])
-      extends Literal[N, T]
+  case class Const[N[_], T](override val evaluate: N[T]) extends Literal[N, T]
 
-  case class Unary[N[_], T1, T2](arg: Literal[N, T1], fn: N[T1] => N[T2])
-      extends Literal[N, T2]
+  case class Unary[N[_], T1, T2](arg: Literal[N, T1], fn: N[T1] => N[T2]) extends Literal[N, T2]
 
-  case class Binary[N[_], T1, T2, T3](arg1: Literal[N, T1], arg2: Literal[N, T2], fn: (N[T1], N[T2]) => N[T3])
+  case class Binary[N[_], T1, T2, T3](arg1: Literal[N, T1],
+                                      arg2: Literal[N, T2],
+                                      fn: (N[T1], N[T2]) => N[T3])
       extends Literal[N, T3]
 
   /**
@@ -41,4 +41,3 @@ object Literal {
       }
     })
 }
-

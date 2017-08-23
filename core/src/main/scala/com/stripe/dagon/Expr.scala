@@ -55,9 +55,8 @@ object Expr {
 
   case class Unary[N[_], T1, T2](arg: Id[T1], fn: N[T1] => N[T2]) extends Expr[N, T2]
 
-  case class Binary[N[_], T1, T2, T3](arg1: Id[T1],
-    arg2: Id[T2],
-    fn: (N[T1], N[T2]) => N[T3]) extends Expr[N, T3]
+  case class Binary[N[_], T1, T2, T3](arg1: Id[T1], arg2: Id[T2], fn: (N[T1], N[T2]) => N[T3])
+      extends Expr[N, T3]
 
   /**
    * Evaluate the given expression with the given mapping of Id to Expr.

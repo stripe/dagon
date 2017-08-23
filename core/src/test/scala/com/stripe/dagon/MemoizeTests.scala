@@ -30,10 +30,11 @@ class MemoizeTests extends FunSuite {
     var calls = 0
     val fn =
       Memoize.functionK[BoolT, BoolT](new Memoize.RecursiveK[BoolT, BoolT] {
-        def toFunction[T] = { case (b, rec) =>
-          calls += 1
+        def toFunction[T] = {
+          case (b, rec) =>
+            calls += 1
 
-          !b
+            !b
         }
       })
 

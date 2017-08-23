@@ -30,10 +30,10 @@ sealed trait ExpressionDag[N[_]] { self =>
   protected def nextId: Int
 
   private def copy(
-    id2Exp: HMap[Id, Expr[N, ?]] = self.idToExp,
-    node2Literal: FunctionK[N, Literal[N, ?]] = self.nodeToLiteral,
-    gcroots: Set[Id[_]] = self.roots,
-    id: Int = self.nextId
+      id2Exp: HMap[Id, Expr[N, ?]] = self.idToExp,
+      node2Literal: FunctionK[N, Literal[N, ?]] = self.nodeToLiteral,
+      gcroots: Set[Id[_]] = self.roots,
+      id: Int = self.nextId
   ): ExpressionDag[N] = new ExpressionDag[N] {
     def idToExp = id2Exp
     def roots = gcroots
@@ -110,7 +110,6 @@ sealed trait ExpressionDag[N[_]] { self =>
     curr
   }
 
-
   /**
    * Convert a N[T] to a Literal[T, N]
    */
@@ -127,7 +126,8 @@ sealed trait ExpressionDag[N[_]] { self =>
       def toFunction[U] = { (kv: (Id[U], Expr[N, U])) =>
         val (id, _) = kv
         val n1 = evaluate(id)
-        rule.apply[U](self)(n1)
+        rule
+          .apply[U](self)(n1)
           .filter(_ != n1)
           .map { n2 =>
             val (dag, newId) = ensure(n2)
@@ -166,34 +166,37 @@ sealed trait ExpressionDag[N[_]] { self =>
    * to the given N[T]
    */
   def find[T](node: N[T]): Option[Id[T]] =
-    nodeToId.getOrElseUpdate(node, {
+    nodeToId.getOrElseUpdate(
+      node, {
 
-      /**
-       * This method looks through linearly evaluating nodes
-       * until we find the given node. Keep a cache of
-       * Expr -> N open for the entire call
-       */
-      val evalExpr = Expr.evaluateMemo(idToExp)
+        /**
+         * This method looks through linearly evaluating nodes
+         * until we find the given node. Keep a cache of
+         * Expr -> N open for the entire call
+         */
+        val evalExpr = Expr.evaluateMemo(idToExp)
 
-      val f = new FunctionK[HMap[Id, Expr[N, ?]]#Pair, Lambda[x => Option[Id[x]]]] {
-        // Make sure to return the original Id, not a Id -> Var -> Expr
-        def toFunction[T1] = { case (thisId, expr) =>
-          if (!expr.isVar && node == evalExpr(expr)) Some(thisId) else None
+        val f = new FunctionK[HMap[Id, Expr[N, ?]]#Pair, Lambda[x => Option[Id[x]]]] {
+          // Make sure to return the original Id, not a Id -> Var -> Expr
+          def toFunction[T1] = {
+            case (thisId, expr) =>
+              if (!expr.isVar && node == evalExpr(expr)) Some(thisId) else None
+          }
+        }
+
+        idToExp.optionMap(f) match {
+          case Stream.Empty =>
+            None
+          case id #:: Stream.Empty =>
+            // this cast is safe if node == expr.evaluate(idToExp) implies types match
+            Some(id).asInstanceOf[Option[Id[T]]]
+          case _ =>
+            // we'd like to make this an error; there should only ever
+            // be zero or one ids for a node.
+            None //sys.error(s"logic error, should only be one mapping: $node -> $others")
         }
       }
-
-      idToExp.optionMap(f) match {
-        case Stream.Empty =>
-          None
-        case id #:: Stream.Empty =>
-          // this cast is safe if node == expr.evaluate(idToExp) implies types match
-          Some(id).asInstanceOf[Option[Id[T]]]
-        case _ =>
-          // we'd like to make this an error; there should only ever
-          // be zero or one ids for a node.
-          None //sys.error(s"logic error, should only be one mapping: $node -> $others")
-      }
-    })
+    )
 
   /**
    * This throws if the node is missing, use find if this is not
@@ -223,7 +226,7 @@ sealed trait ExpressionDag[N[_]] { self =>
              * check this property with the typesystem easily, check it here
              */
             require(n == node,
-              s"Equality or nodeToLiteral is incorrect: nodeToLit($node) = Const($n)")
+                    s"Equality or nodeToLiteral is incorrect: nodeToLit($node) = Const($n)")
             addExp(node, Expr.Const(n))
           case Literal.Unary(prev, fn) =>
             val (exp1, idprev) = ensure(prev.evaluate)
@@ -297,7 +300,9 @@ sealed trait ExpressionDag[N[_]] { self =>
     // TODO, we can do a much better algorithm that builds this function
     // for all nodes in the dag
     val pointsToNode = new FunctionK[HMap[Id, Expr[N, ?]]#Pair, Lambda[x => Option[N[x]]]] {
-      def toFunction[T] = { case (id, expr) => if (dependsOn(expr, node)) Some(evaluate(id)) else None }
+      def toFunction[T] = {
+        case (id, expr) => if (dependsOn(expr, node)) Some(evaluate(id)) else None
+      }
     }
     idToExp.optionMap(pointsToNode).toSet
   }
@@ -324,11 +329,8 @@ object ExpressionDag {
    * apply the given rule until it no longer applies, and return the N[T] which is
    * equivalent under the given rule
    */
-  def applyRule[T, N[_]](n: N[T],
-    nodeToLit: FunctionK[N, Literal[N, ?]],
-    rule: Rule[N]): N[T] = {
+  def applyRule[T, N[_]](n: N[T], nodeToLit: FunctionK[N, Literal[N, ?]], rule: Rule[N]): N[T] = {
     val (dag, id) = apply(n, nodeToLit)
     dag(rule).evaluate(id)
   }
 }
-
