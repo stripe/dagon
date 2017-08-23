@@ -84,11 +84,6 @@ lazy val dagonSettings = Seq(
         <url>http://github.com/johnynek/</url>
       </developer>
       <developer>
-        <id>coltfred</id>
-        <name>Colt Frederickson</name>
-        <url>http://github.com/coltfred/</url>
-      </developer>
-      <developer>
         <id>non</id>
         <name>Erik Osheim</name>
         <url>http://github.com/non/</url>
