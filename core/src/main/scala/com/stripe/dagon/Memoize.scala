@@ -1,7 +1,5 @@
 package com.stripe.dagon
 
-import scala.collection.mutable
-
 object Memoize {
 
   /**
@@ -20,8 +18,21 @@ object Memoize {
    *   }
    */
   def function[A, B](f: (A, A => B) => B): A => B = {
-    val cache = mutable.Map.empty[A, B]
-    lazy val g: A => B = (a: A) => cache.getOrElseUpdate(a, f(a, g))
+    // It is tempting to use a mutable.Map here,
+    // but mutating the Map inside of the call-by-name value causes
+    // some issues in some versions of scala. It is
+    // safer to use a mutable pointer to an immutable Map.
+    var cache = Map.empty[A, B]
+    def getOrElseUpdate(a: A, b: => B): B =
+      cache.get(a) match {
+        case Some(res) => res
+        case None =>
+          val res = b
+          cache = cache.updated(a, res)
+          res
+      }
+
+    lazy val g: A => B = (a: A) => getOrElseUpdate(a, f(a, g))
     g
   }
 
