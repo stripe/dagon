@@ -208,4 +208,16 @@ object ExpressionDagTests extends Properties("ExpressionDag") {
     val expected = a.inc(x) + a.inc(y)
     testRule(complex, expected, CombineInc)
   }
+
+  property("all tails have fanOut of 1") = forAll { (n1: Int, ns: List[Int]) =>
+    // Make sure we have a set of distinct nodes
+    val tails = (n1 :: ns).zipWithIndex.map { case (i, idx) => Formula(i).inc(idx) }
+
+    val (dag, roots) = tails.foldLeft((ExpressionDag.empty[Formula](toLiteral), Set.empty[Id[_]])) { case ((d, s), f) =>
+      val (dnext, id) = d.addRoot(f)
+      (dnext, s + id)
+    }
+
+    roots.forall(dag.fanOut(_) == 1)
+  }
 }

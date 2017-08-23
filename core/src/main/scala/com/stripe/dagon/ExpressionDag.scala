@@ -271,14 +271,18 @@ sealed trait ExpressionDag[N[_]] { self =>
     val pointsToNode = new FunctionK[HMap[Id, Expr[N, ?]]#Pair, Lambda[x => Option[N[x]]]] {
       def toFunction[T] = { case (id, expr) => if (dependsOn(expr, node)) Some(evaluate(id)) else None }
     }
-    idToExp.optionMap(pointsToNode).toSet.size
+    val interiorFanOut = idToExp.optionMap(pointsToNode).toSet.size
+    val tailFanOut = if (roots(idOf(node))) 1 else 0
+
+    interiorFanOut + tailFanOut
   }
+
   def contains(node: N[_]): Boolean = find(node).isDefined
 }
 
 object ExpressionDag {
 
-  private def empty[N[_]](n2l: FunctionK[N, Literal[N, ?]]): ExpressionDag[N] =
+  def empty[N[_]](n2l: FunctionK[N, Literal[N, ?]]): ExpressionDag[N] =
     new ExpressionDag[N] {
       val idToExp = HMap.empty[Id, Expr[N, ?]]
       val nodeToLiteral = n2l
