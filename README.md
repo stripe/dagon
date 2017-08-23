@@ -16,14 +16,53 @@ Dagon is a library for rewriting
 
 ### Quick Start
 
-### Details
+Dagon supports Scala 2.10, 2.11, and 2.12. It supports both the JVM
+and JS platforms.
 
-Dagon is 
+To use Dagon in your own project, you can include this snippet in
+your `build.sbt` file:
+
+```scala
+// use this snippet for the JVM
+libraryDependencies ++= List(
+  "com.stripe" %% "dagon-core" % "0.0.1",
+  compilerPlugin("org.spire-math" %% "kind-projector" % "0.9.4"))
+
+// use this snippet for JS, or cross-building
+libraryDependencies ++= List(
+  "com.stripe" %%% "dagon-core" % "0.0.1",
+  compilerPlugin("org.spire-math" %% "kind-projector" % "0.9.4"))
+```
+
+We strongly encourage you to use *kind-projector* with Dagon. Otherwise,
+working with types like `FunctionK` will be signficantly more painful.
+
+### Example
+
+To use Dagon you will need the following things:
+
+ * a DAG or AST type (e.g. `Eqn[T]` below).
+ * a transformation from your DAG to Dagon's literal types (e.g. `toLiteral`)
+ * some rewrite rules (e.g. `SimplifyNegation` and `SimplifyAddition`)
+
+Dagon allows you to write very terse, natural rules that use partial
+functions (similar to patttern-matching) to identify and transform
+some AST "shapes" while leaving others alone. These patterns will all
+be recursively applied until none of them match any part of the AST.
+
+One consequence of this is that your rules should shrink the AST, or
+at least simplify it in some sense. If your rules do not converge on a
+final AST it's possible that the rewriter will not terminate (and will
+loop forever on an ever-changing AST).
+
+Here's a complete, working example of using Dagon:
 
 ```scala
 object Example {
 
   import com.stripe.dagon._
+  
+  // 1. set up an AST type
 
   sealed trait Eqn[T] {
     def unary_-(): Eqn[T] = Negate(this)
@@ -37,9 +76,13 @@ object Example {
   case class Add[T](lhs: Eqn[T], rhs: Eqn[T]) extends Eqn[T]
   
   object Eqn {
+    // these function constructors make the definition of
+    // toLiteral a lot nicer.
     def negate[T]: Eqn[T] => Eqn[T] = Negate(_)
     def add[T]: (Eqn[T], Eqn[T]) => Eqn[T] = Add(_, _)
   }
+  
+  // 2. set up a transfromation from AST to Literal
 
   val toLiteral: FunctionK[Eqn, Literal[Eqn, ?]] =
     Memoize.functionK[Eqn, Literal[Eqn, ?]](
@@ -51,6 +94,8 @@ object Example {
           case (Add(x, y), f) => Literal.Binary(f(x), f(y), Eqn.add)
         }
       })
+      
+  // 3. set up rewrite rules
 
   object SimplifyNegation extends PartialRule[Eqn] {
     def applyWhere[T](on: ExpressionDag[Eqn]) = {
@@ -68,20 +113,79 @@ object Example {
       case Add(Const(x), Add(e, Const(y))) => Add(Const(x + y), e)
     }
   }
-
-  val rules = SimplifyNegation.orElse(SimplifyAddition)
+  
+  // 4. apply rewrite rules to a particular AST value
 
   val a: Eqn[Unit] = Var("x") + Const(1)
   val b1 = a + Const(2)
   val b2 = a + Const(5) + Var("y")
   val c = b1 - b2
 
+  val rules = SimplifyNegation.orElse(SimplifyAddition)
+
   val simplified: Eqn[Unit] =
     ExpressionDag.applyRule(c, toLiteral, rules)
 }
 ```
 
+Dagon assumes your AST is paramterized on a `T` type. If yours is not,
+you can create a new type of the correct shape using a phantom type:
+
+```scala
+sealed trait Ast
+...
+
+object Ast {
+  // T is a "phantom type" -- it's not actually used in the type alias.
+  type Phantom[T] = Ast
+}
+
+val toLiteral: FunctionK[Ast.Phantom, Literal[Ast.Phantom, ?]] = ...
+```
+
+### Implementing toLiteral
+
+The function `toLiteral` has the type `FunctionK[N, Literal[N, ?]]`.
+This means that it can produce a `N[T] => Literal[N, T]`. The type
+`N[_]` is your AST type; in the example it was `Eqn[_]`.
+
+Dagon's `Literal` is sealed and has three subtypes:
+
+ * `Literal.Const(leaf)`: a `leaf` node of your AST
+ * `Literal.Unary(node, f)`: a child `node` and a unary function `f`
+ * `Literal.Binary(lhs, rhs, g)`: two nodes (`lhs`, `rhs`) and a binary function `g`
+
+The functions `f` and `g` are mapping from inputs of type `N[T1]` to
+outputs of type `N[T2]` (where `N[_]` is your AST type). In the
+example above `T1` and `T2` are both `Unit`.
+
+It's important that your `toLiteral` function is invertible. That
+means that the following should be true:
+
+```scala
+val node: Ast[T] = ...
+toLiteral[T](node).evaluate == node
+```
+
 ### Future Work
+
+Here are some directions possible future work could take:
+
+ * Producing laws to generate and test your AST values against these
+   rewrites. Many of the tests we use internally could be generalized
+   and exported for third-party use.
+
+ * Cost-based optimization: right now rules are applied until they
+   don't match, which means that rules need to be conservative, and
+   should not expand the size of the graph. Some rules could locally
+   increase graph size but result in smaller graphs overall. One
+   example of this would be *arithmetic distribution*, e.g. rewriting
+   `x * (y + z)` into `x * z + y * z`.
+   
+ * Benchmarking and performance optimization. While this code performs
+   adequately for most real-world use cases it's likely quadratic or
+   super-quadratic in the worst-case. We could likely optimize some of
+   the algorithms we are using as well as the actual code involved.
 
 ### Copyright and License
 
