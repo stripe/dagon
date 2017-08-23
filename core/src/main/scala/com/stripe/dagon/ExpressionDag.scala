@@ -114,7 +114,7 @@ sealed trait ExpressionDag[N[_]] { self =>
   /**
    * Convert a N[T] to a Literal[T, N]
    */
-  def toLiteral[T](n: N[T]): Literal[N, T] = nodeToLiteral.apply[T](n)
+  def toLiteral[T](n: N[T]): Literal[N, T] = nodeToLiteral(n)
 
   /**
    * apply the rule at the first place that satisfies
@@ -167,10 +167,18 @@ sealed trait ExpressionDag[N[_]] { self =>
    */
   def find[T](node: N[T]): Option[Id[T]] =
     nodeToId.getOrElseUpdate(node, {
+
+      /**
+       * This method looks through linearly evaluating nodes
+       * until we find the given node. Keep a cache of
+       * Expr -> N open for the entire call
+       */
+      val evalExpr = Expr.evaluateMemo(idToExp)
+
       val f = new FunctionK[HMap[Id, Expr[N, ?]]#Pair, Lambda[x => Option[Id[x]]]] {
         // Make sure to return the original Id, not a Id -> Var -> Expr
         def toFunction[T1] = { case (thisId, expr) =>
-          if (!expr.isVar && node == expr.evaluate(idToExp)) Some(thisId) else None
+          if (!expr.isVar && node == evalExpr(expr)) Some(thisId) else None
         }
       }
 
