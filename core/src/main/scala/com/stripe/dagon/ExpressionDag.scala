@@ -276,16 +276,31 @@ sealed trait ExpressionDag[N[_]] { self =>
    * use .contains(n) to check for containment
    */
   def fanOut(node: N[_]): Int = {
-    val pointsToNode = new FunctionK[HMap[Id, Expr[N, ?]]#Pair, Lambda[x => Option[N[x]]]] {
-      def toFunction[T] = { case (id, expr) => if (dependsOn(expr, node)) Some(evaluate(id)) else None }
-    }
-    val interiorFanOut = idToExp.optionMap(pointsToNode).toSet.size
-    val tailFanOut = if (roots(idOf(node))) 1 else 0
+    val interiorFanOut = dependentsOf(node).size
+    val tailFanOut = if (isRoot(node)) 1 else 0
 
     interiorFanOut + tailFanOut
   }
 
+  /**
+   * Is this node a root of this graph
+   */
+  def isRoot(n: N[_]): Boolean =
+    roots(idOf(n))
+
   def contains(node: N[_]): Boolean = find(node).isDefined
+
+  /**
+   * list all the nodes that depend on the given node
+   */
+  def dependentsOf(node: N[_]): Set[N[_]] = {
+    // TODO, we can do a much better algorithm that builds this function
+    // for all nodes in the dag
+    val pointsToNode = new FunctionK[HMap[Id, Expr[N, ?]]#Pair, Lambda[x => Option[N[x]]]] {
+      def toFunction[T] = { case (id, expr) => if (dependsOn(expr, node)) Some(evaluate(id)) else None }
+    }
+    idToExp.optionMap(pointsToNode).toSet
+  }
 }
 
 object ExpressionDag {
