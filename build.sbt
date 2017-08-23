@@ -121,16 +121,16 @@ lazy val dagonJVM = project
   .settings(moduleName := "dagon")
   .settings(dagonSettings)
   .settings(commonJvmSettings)
-  .aggregate(coreJVM, catsJVM, benchmark)
-  .dependsOn(coreJVM, catsJVM, benchmark)
+  .aggregate(coreJVM, benchmark)
+  .dependsOn(coreJVM, benchmark)
 
 lazy val dagonJS = project
   .in(file(".dagonJS"))
   .settings(moduleName := "dagon")
   .settings(dagonSettings)
   .settings(commonJsSettings)
-  .aggregate(coreJS, catsJS)
-  .dependsOn(coreJS, catsJS)
+  .aggregate(coreJS)
+  .dependsOn(coreJS)
   .enablePlugins(ScalaJSPlugin)
 
 lazy val core = crossProject
@@ -148,27 +148,9 @@ lazy val core = crossProject
 lazy val coreJVM = core.jvm
 lazy val coreJS = core.js
 
-lazy val cats = crossProject
-  .crossType(CrossType.Pure)
-  .in(file("cats"))
-  .dependsOn(core % "compile->compile;test->test")
-  .settings(name := "dagon-cats")
-  .settings(moduleName := "dagon-cats")
-  .settings(dagonSettings: _*)
-  .settings(libraryDependencies ++= Seq("org.typelevel" %%% "cats-core" % "0.9.0",
-                                        "org.typelevel" %%% "cats-laws" % "0.9.0" % Test))
-  .settings(mimaPreviousArtifacts := Set(previousArtifact("cats")))
-  .disablePlugins(JmhPlugin)
-  .jsSettings(commonJsSettings: _*)
-  .jsSettings(coverageEnabled := false)
-  .jvmSettings(commonJvmSettings: _*)
-
-lazy val catsJVM = cats.jvm
-lazy val catsJS = cats.js
-
 lazy val benchmark = project
   .in(file("benchmark"))
-  .dependsOn(coreJVM, catsJVM)
+  .dependsOn(coreJVM)
   .settings(name := "dagon-benchmark")
   .settings(dagonSettings: _*)
   .settings(noPublish: _*)
@@ -177,7 +159,7 @@ lazy val benchmark = project
 
 lazy val docs = project
   .in(file("docs"))
-  .dependsOn(coreJVM, catsJVM)
+  .dependsOn(coreJVM)
   .settings(name := "dagon-docs")
   .settings(dagonSettings: _*)
   .settings(noPublish: _*)
