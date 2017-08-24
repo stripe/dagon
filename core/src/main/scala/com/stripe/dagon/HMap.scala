@@ -40,6 +40,9 @@ final class HMap[K[_], V[_]](protected val map: Map[K[_], V[_]]) {
   override def hashCode: Int =
     map.hashCode
 
+  def updated[T](k: K[T], v: V[T]): HMap[K, V] =
+    HMap.from[K, V](map.updated(k, v))
+
   def +[T](kv: (K[T], V[T])): HMap[K, V] =
     HMap.from[K, V](map + kv)
 

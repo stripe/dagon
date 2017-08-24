@@ -25,12 +25,12 @@ your `build.sbt` file:
 ```scala
 // use this snippet for the JVM
 libraryDependencies ++= List(
-  "com.stripe" %% "dagon-core" % "0.0.1",
+  "com.stripe" %% "dagon-core" % "0.1.0",
   compilerPlugin("org.spire-math" %% "kind-projector" % "0.9.4"))
 
 // use this snippet for JS, or cross-building
 libraryDependencies ++= List(
-  "com.stripe" %%% "dagon-core" % "0.0.1",
+  "com.stripe" %%% "dagon-core" % "0.1.0",
   compilerPlugin("org.spire-math" %% "kind-projector" % "0.9.4"))
 ```
 
@@ -146,8 +146,9 @@ val toLiteral: FunctionK[Ast.Phantom, Literal[Ast.Phantom, ?]] = ...
 ### Implementing toLiteral
 
 The function `toLiteral` has the type `FunctionK[N, Literal[N, ?]]`.
-This means that it can produce a `N[T] => Literal[N, T]`. The type
-`N[_]` is your AST type; in the example it was `Eqn[_]`.
+This means that it can produce a `N[T] => Literal[N, T]` for any type
+`T`. The type `N[_]` corresponds to your AST type; in the example it
+is `Eqn[_]`.
 
 Dagon's `Literal` is sealed and has three subtypes:
 
@@ -165,6 +166,26 @@ means that the following should be true:
 ```scala
 val node: Ast[T] = ...
 toLiteral[T](node).evaluate == node
+```
+
+### Using AST without type parameters
+
+You can use Dagon even if your AST does not have a type parameter. In
+these cases, you will need to define a type alias that takes (and
+ignores) a phantom type:
+
+```scala
+object Example2 {
+  sealed trait Eqn {
+    def unary_-(): Eqn = Negate(this)
+    def +(that: Eqn): Eqn = Add(this, that)
+    def -(that: Eqn): Eqn = Add(this, Negate(that))
+  }
+
+  type EqnT[T] = Eqn
+  
+  // use EqnT with Dagon
+}
 ```
 
 ### Future Work

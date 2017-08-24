@@ -6,16 +6,6 @@ package com.stripe.dagon
 sealed class HCache[K[_], V[_]] private (init: HMap[K, V]) {
   private var hmap: HMap[K, V] = init
 
-  /**
-   * Get an immutable snapshot of the current state
-   */
-  def snapshot: HMap[K, V] = hmap
-
-  /**
-   * Get a mutable copy of the current state
-   */
-  def duplicate: HCache[K, V] = new HCache(hmap)
-
   def getOrElseUpdate[T](k: K[T], v: => V[T]): V[T] =
     hmap.get(k) match {
       case Some(exists) => exists

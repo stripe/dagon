@@ -15,12 +15,12 @@ trait Rule[N[_]] { self =>
   def apply[T](on: ExpressionDag[N]): N[T] => Option[N[T]]
 
   // If the current rule cannot apply, then try the argument here
-  def orElse(that: Rule[N]): Rule[N] = new Rule[N] {
-    def apply[T](on: ExpressionDag[N]) = { n =>
-      self.apply(on)(n).orElse(that.apply(on)(n))
-    }
+  def orElse(that: Rule[N]): Rule[N] =
+    new Rule[N] {
+      def apply[T](on: ExpressionDag[N]) =
+        (n: N[T]) => self(on)(n).orElse(that(on)(n))
 
-    override def toString: String =
-      s"$self.orElse($that)"
-  }
+      override def toString: String =
+        s"$self.orElse($that)"
+    }
 }
