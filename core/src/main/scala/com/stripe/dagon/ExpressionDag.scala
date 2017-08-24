@@ -169,7 +169,7 @@ sealed trait ExpressionDag[N[_]] { self =>
     nodeToId.getOrElseUpdate(
       node, {
 
-        /**
+        /*
          * This method looks through linearly evaluating nodes
          * until we find the given node. Keep a cache of
          * Expr -> N open for the entire call
@@ -221,7 +221,7 @@ sealed trait ExpressionDag[N[_]] { self =>
       case None =>
         toLiteral(node) match {
           case Literal.Const(n) =>
-            /**
+            /*
              * Since the code is not performance critical, but correctness critical, and we can't
              * check this property with the typesystem easily, check it here
              */
