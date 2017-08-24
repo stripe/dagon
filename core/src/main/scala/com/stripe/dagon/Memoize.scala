@@ -39,14 +39,22 @@ object Memoize {
   type RecursiveK[A[_], B[_]] = FunctionK[Lambda[x => (A[x], FunctionK[A, B])], B]
 
   /**
-   * Memoize a FunctionK using an HCache internally.
+   * Memoize a FunctionK using an HMap internally.
    */
   def functionK[A[_], B[_]](f: RecursiveK[A, B]): FunctionK[A, B] = {
-    val hcache = HCache.empty[A, B]
-    lazy val hg: FunctionK[A, B] = new FunctionK[A, B] {
-      def toFunction[T] = { at =>
-        hcache.getOrElseUpdate(at, f((at, hg)))
+    var hmap = HMap.empty[A, B]
+    def getOrElseUpdate[T](at: A[T], bt: => B[T]): B[T] =
+      hmap.get(at) match {
+        case Some(res) => res
+        case None =>
+          val res = bt
+          hmap = hmap.updated(at, res)
+          res
       }
+
+    lazy val hg: FunctionK[A, B] = new FunctionK[A, B] {
+      def toFunction[T]: A[T] => B[T] =
+        at => getOrElseUpdate(at, f[T]((at, hg)))
     }
     hg
   }
