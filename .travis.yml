@@ -4,37 +4,40 @@ matrix:
       language: scala
       jdk: oraclejdk8
       env: PLATFORM="jvm"
-      script: sbt coreJVM/test doc mimaReportBinaryIssues
+      script: sbt "++2.10.6" coverage coreJVM/test doc mimaReportBinaryIssues coverageReport && codecov
 
     - scala: 2.10.6
       language: scala
       jdk: oraclejdk8
       env: PLATFORM="js"
-      script: sbt coreJS/test
+      script: sbt "++2.10.6" coreJS/test
 
-    - scala: 2.11.8
+    - scala: 2.11.11
       language: scala
       jdk: oraclejdk8
       env: PLATFORM="jvm"
-      script: sbt coreJVM/test doc mimaReportBinaryIssues
+      script: sbt "++2.11.11" coverage coreJVM/test doc mimaReportBinaryIssues coverageReport && codecov
 
-    - scala: 2.11.8
+    - scala: 2.11.11
       language: scala
       jdk: oraclejdk8
       env: PLATFORM="js"
-      script: sbt coreJS/test doc
+      script: sbt "++2.11.11" coreJS/test
 
-    - scala: 2.12.1
+    - scala: 2.12.3
       language: scala
       jdk: oraclejdk8
       env: PLATFORM="jvm"
-      script: sbt coreJVM/test doc mimaReportBinaryIssues
+      script: sbt "++2.12.3" coverage coreJVM/test doc mimaReportBinaryIssues coverageReport && codecov
 
-    - scala: 2.12.1
+    - scala: 2.12.3
       language: scala
       jdk: oraclejdk8
       env: PLATFORM="js"
-      script: sbt coreJS/test
+      script: sbt "++2.12.3" coreJS/test
+
+install:
+ - pip install --user codecov
 
 cache:
   directories:
