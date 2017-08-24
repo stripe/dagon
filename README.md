@@ -1,3 +1,7 @@
+[![Build Status](https://api.travis-ci.org/stripe/dagon.svg)](https://travis-ci.org/stripe/dagon)
+[![codecov.io](http://codecov.io/github/stripe/dagon/coverage.svg?branch=master)](http://codecov.io/github/stripe/dagon?branch=master)
+[![Latest version](https://index.scala-lang.org/stripe/dagon/dagon-core/latest.svg?color=orange)](https://index.scala-lang.org/stripe/dagon/dagon-core)
+
 ## Dagon
 
 > Dagon [...] is an ancient Mesopotamian Assyro-Babylonian and Levantine
