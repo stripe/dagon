@@ -24,3 +24,10 @@ trait Rule[N[_]] { self =>
       s"$self.orElse($that)"
   }
 }
+
+object Rule {
+  def empty[N[_]]: Rule[N] =
+    new Rule[N] {
+      def apply[T](on: ExpressionDag[N]) = { _ => None }
+    }
+}

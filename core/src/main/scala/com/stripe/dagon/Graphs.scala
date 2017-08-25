@@ -8,7 +8,14 @@ object Graphs {
    * Return the depth first enumeration of reachable nodes,
    * NOT INCLUDING INPUT, unless it can be reached via neighbors
    */
-  def depthFirstOf[T](t: T)(nf: NeighborFn[T]): List[T] = {
+  def depthFirstOf[T](t: T)(nf: NeighborFn[T]): List[T] =
+    reflexiveTransitiveClosure(nf(t).toList)(nf)
+
+  /**
+   * All the nodes we can reach from this start, including
+   * the initial nodes
+   */
+  def reflexiveTransitiveClosure[T](start: List[T])(nf: NeighborFn[T]): List[T] = {
     @annotation.tailrec
     def loop(stack: List[T], deps: List[T], acc: Set[T]): List[T] =
       stack match {
@@ -20,7 +27,6 @@ object Graphs {
           val newDeps = if (acc(h)) deps else h :: deps
           loop(newStack, newDeps, acc + h)
       }
-    val start = nf(t).toList
     loop(start, start.distinct, start.toSet).reverse
   }
 
