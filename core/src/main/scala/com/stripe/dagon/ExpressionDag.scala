@@ -73,30 +73,17 @@ sealed abstract class ExpressionDag[N[_]] { self =>
   /**
    * Which ids are reachable from the roots
    */
-  private def reachableIds: Set[Id[_]] = {
-    // We actually don't care about the return type of the Set
-    // This is a constant function at the type level
-    type IdSet[t] = Set[Id[_]]
-    def expand(s: Set[Id[_]]): Set[Id[_]] = {
-      val f = new FunctionK[HMap[Id, Expr[N, ?]]#Pair, Lambda[x => Option[Set[Id[_]]]]] {
-        def toFunction[T] = {
-          case (id, Expr.Const(_)) if s(id) => Some(s)
-          case (id, Expr.Var(v)) if s(id) => Some(s + v)
-          case (id, Expr.Unary(id0, _)) if s(id) => Some(s + id0)
-          case (id, Expr.Binary(id0, id1, _)) if s(id) => Some((s + id0) + id1)
-          case _ => None
-        }
+  def reachableIds: Set[Id[_]] = {
+
+    def neighbors(i: Id[_]): List[Id[_]] =
+      idToExp(i) match {
+        case Expr.Const(_) => Nil
+        case Expr.Var(id) => id :: Nil
+        case Expr.Unary(id, _) => id :: Nil
+        case Expr.Binary(id0, id1, _) => id0 :: id1 :: Nil
       }
-      // Note this Stream must always be non-empty as long as roots are
-      // TODO: we don't need to use collect here, just .get on each id in s
-      idToExp.optionMap[IdSet](f).reduce(_ ++ _)
-    }
-    // call expand while we are still growing
-    def go(s: Set[Id[_]]): Set[Id[_]] = {
-      val step = expand(s)
-      if (step == s) s else go(step)
-    }
-    go(roots)
+
+    Graphs.reflexiveTransitiveClosure(roots.toList)(neighbors _).toSet
   }
 
   private def gc: ExpressionDag[N] = {
@@ -132,20 +119,24 @@ sealed abstract class ExpressionDag[N[_]] { self =>
 
     val f = new FunctionK[HMap[Id, Expr[N, ?]]#Pair, Lambda[x => Option[DagT[x]]]] {
       def toFunction[U] = { (kv: (Id[U], Expr[N, U])) =>
-        val (id, _) = kv
-        val n1 = evaluate(id)
-        rule
-          .apply[U](self)(n1)
-          .filter(_ != n1)
-          .map { n2 =>
-            val (dag, newId) = ensure(n2)
+        val (id, expr) = kv
 
-            // We can't delete Ids which may have been shared
-            // publicly, and the ids may be embedded in many
-            // nodes. Instead we remap 'id' to be a pointer
-            // to 'newid'.
-            dag.copy(id2Exp = dag.idToExp + (id -> Expr.Var[N, U](newId))).gc
-          }
+        if (expr.isVar) None // Vars always point somewhere, apply the rule there
+        else {
+          val n1 = evaluate(id)
+          rule
+            .apply[U](self)(n1)
+            .filter(_ != n1)
+            .map { n2 =>
+              val (dag, newId) = ensure(n2)
+
+              // We can't delete Ids which may have been shared
+              // publicly, and the ids may be embedded in many
+              // nodes. Instead we remap 'id' to be a pointer
+              // to 'newid'.
+              dag.copy(id2Exp = dag.idToExp + (id -> Expr.Var[N, U](newId))).gc
+            }
+        }
       }
     }
 
@@ -354,10 +345,9 @@ sealed abstract class ExpressionDag[N[_]] { self =>
    */
   def dependentsOf(node: N[_]): Set[N[_]] = {
 
-    @annotation.tailrec
     def dependsOn(expr: Expr[N, _]): Boolean = expr match {
       case Expr.Const(_) => false
-      case Expr.Var(id) => dependsOn(idToExp(id))
+      case Expr.Var(id) => sys.error(s"logic error: Var($id)")
       case Expr.Unary(id, _) => evaluate(id) == node
       case Expr.Binary(id0, id1, _) => evaluate(id0) == node || evaluate(id1) == node
     }
@@ -366,7 +356,10 @@ sealed abstract class ExpressionDag[N[_]] { self =>
     // for all nodes in the dag
     val pointsToNode = new FunctionK[HMap[Id, Expr[N, ?]]#Pair, Lambda[x => Option[N[x]]]] {
       def toFunction[T] = {
-        case (id, expr) => if (dependsOn(expr)) Some(evaluate(id)) else None
+        case (id, expr) =>
+          // We can ignore Vars here, since all vars point to a final expression
+          if ((!expr.isVar) && dependsOn(expr)) Some(evaluate(id))
+          else None
       }
     }
     idToExp.optionMap(pointsToNode).toSet

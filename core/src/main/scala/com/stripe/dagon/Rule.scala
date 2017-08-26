@@ -17,7 +17,14 @@ trait Rule[N[_]] { self =>
   // If the current rule cannot apply, then try the argument here
   def orElse(that: Rule[N]): Rule[N] = new Rule[N] {
     def apply[T](on: ExpressionDag[N]) = { n =>
-      self.apply(on)(n).orElse(that.apply(on)(n))
+      self.apply(on)(n) match {
+        case Some(n1) if n1 == n =>
+          // If the rule emits the same as input fall through
+          that.apply(on)(n)
+        case None =>
+          that.apply(on)(n)
+        case s@Some(_) => s
+      }
     }
 
     override def toString: String =

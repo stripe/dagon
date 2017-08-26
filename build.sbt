@@ -139,7 +139,7 @@ lazy val core = crossProject
   .settings(name := "dagon-core")
   .settings(moduleName := "dagon-core")
   .settings(dagonSettings: _*)
-  .settings(mimaPreviousArtifacts := Set(previousArtifact("core")))
+  //.settings(mimaPreviousArtifacts := Set(previousArtifact("core"))) TODO re-enable after 0.2.0 is published
   .disablePlugins(JmhPlugin)
   .jsSettings(commonJsSettings: _*)
   .jsSettings(coverageEnabled := false)

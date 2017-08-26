@@ -20,6 +20,9 @@ object DataFlowTest {
 
     def ++[U >: T](that: Flow[U]): Flow[U] =
       Flow.Merge(this, that)
+
+    def tagged[A](a: A): Flow[T] =
+      Flow.Tagged(this, a)
   }
 
   object Flow {
@@ -30,6 +33,7 @@ object DataFlowTest {
         case IteratorSource(_) => Nil
         case OptionMapped(f, _) => f :: Nil
         case ConcatMapped(f, _) => f :: Nil
+        case Tagged(f, _) => f :: Nil
         case Merge(left, right) => left :: right :: Nil
       }
 
@@ -40,6 +44,7 @@ object DataFlowTest {
     case class OptionMapped[T, U](input: Flow[T], fn: T => Option[U]) extends Flow[U]
     case class ConcatMapped[T, U](input: Flow[T], fn: T => TraversableOnce[U]) extends Flow[U]
     case class Merge[T](left: Flow[T], right: Flow[T]) extends Flow[T]
+    case class Tagged[A, T](input: Flow[T], tag: A) extends Flow[T]
 
     def toLiteral: FunctionK[Flow, Literal[Flow, ?]] =
       Memoize.functionK[Flow, Literal[Flow, ?]](new Memoize.RecursiveK[Flow, Literal[Flow, ?]] {
@@ -49,6 +54,7 @@ object DataFlowTest {
           case (it@IteratorSource(_), _) => Const(it)
           case (o: OptionMapped[s, T], rec) => Unary(rec[s](o.input), { f: Flow[s] => OptionMapped(f, o.fn) })
           case (c: ConcatMapped[s, T], rec) => Unary(rec[s](c.input), { f: Flow[s] => ConcatMapped(f, c.fn) })
+          case (t: Tagged[a, s], rec) => Unary(rec[s](t.input), { f: Flow[s] => Tagged(f, t.tag) })
           case (m: Merge[s], rec) => Binary(rec(m.left), rec(m.right), { (l: Flow[s], r: Flow[s]) => Merge(l, r) })
         }
       })
@@ -149,6 +155,12 @@ object DataFlowTest {
       }
     }
 
+    object removeTag extends PartialRule[Flow] {
+      def applyWhere[T](on: ExpressionDag[Flow]) = {
+        case Tagged(in, _) => in
+      }
+    }
+
     /**
      * these are all optimization rules to simplify
      */
@@ -157,10 +169,11 @@ object DataFlowTest {
         .orElse(composeConcatMap)
         .orElse(mergePullDown)
         .orElse(rightMerge)
+        .orElse(removeTag)
         .orElse(evalSource)
 
     val ruleGen: Gen[Rule[Flow]] = {
-      val allRules = List(composeOptionMapped, composeConcatMap, optionMapToConcatMap, mergePullDown, rightMerge, evalSource)
+      val allRules = List(composeOptionMapped, composeConcatMap, optionMapToConcatMap, mergePullDown, rightMerge, evalSource, removeTag)
       for {
         n <- Gen.choose(0, allRules.size)
         gen = if (n == 0) Gen.const(List(Rule.empty[Flow])) else Gen.pick(n, allRules)
@@ -203,7 +216,13 @@ object DataFlowTest {
           res = if (swap == 1) (right ++ left) else (left ++ right)
         } yield res
 
-      Gen.frequency((3, genSource), (1, optionMap), (1, concatMap), (1, merge))
+      val tagged: Gen[Flow[T]] =
+        for {
+          tag <- g
+          input <- genFlow(g)
+        } yield input.tagged(tag)
+
+      Gen.frequency((3, genSource), (1, optionMap), (1, concatMap), (1, tagged), (1, merge))
     }
 
     implicit def arbFlow[T: Arbitrary: Cogen]: Arbitrary[Flow[T]] =
@@ -279,9 +298,11 @@ class DataFlowTest extends FunSuite {
         internal + external
       }
 
-      assert(optimizedDag.fanOut(optF) == fanOut(optF))
-      assert(optimizedDag.isRoot(optF))
-      assert(depGraph.isTail(optF))
+      optimizedDag.allNodes.foreach { n =>
+        assert(optimizedDag.fanOut(n) == fanOut(n))
+        assert(optimizedDag.isRoot(n) == (n == optF), s"$n should not be a root, only $optF is, $optimizedDag")
+        assert(depGraph.isTail(n) == optimizedDag.isRoot(n), s"$n is seen as a root, but shouldn't, $optimizedDag")
+      }
     }
 
     forAll(law(_, _, _))
@@ -415,7 +436,6 @@ class DataFlowTest extends FunSuite {
       (optimizedDag.allNodes.iterator ++ check.iterator).foreach { n =>
         assert(optimizedDag.contains(n) == optimizedDag.allNodes(n), s"$n $optimizedDag")
       }
-
     }
   }
 
@@ -434,6 +454,28 @@ class DataFlowTest extends FunSuite {
       allRoots.foreach { id =>
         assert(optimizedDag.evaluateOption(id).isDefined, s"$optimizedDag $id")
       }
+    }
+  }
+
+  test("removeTag removes all .tagged") {
+    forAll { f: Flow[Int] =>
+      val (dag, id) = ExpressionDag(f, Flow.toLiteral)
+      val optDag = dag(Flow.allRules) // includes removeTagged
+
+      optDag.allNodes.foreach {
+        case Flow.Tagged(_, _) => fail(s"expected no Tagged, but found one")
+        case _ => succeed
+      }
+    }
+  }
+
+  test("reachableIds are only the set of nodes") {
+    forAll { (f: Flow[Int], rule: Rule[Flow], max: Int) =>
+      val (dag, id) = ExpressionDag(f, Flow.toLiteral)
+
+      val optimizedDag = dag.applyMax(rule, max)
+
+      assert(optimizedDag.reachableIds.map(optimizedDag.evaluate(_)) == optimizedDag.allNodes, s"$optimizedDag")
     }
   }
 }
