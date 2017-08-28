@@ -49,9 +49,19 @@ abstract class DependantGraph[T] {
 
   def fanOut(p: T): Option[Int] = dependantsOf(p).map { _.size }
 
+  def isTail(t: T): Boolean = allTails.contains(t)
+
   /**
    * Return all dependendants of a given node.
    * Does not include itself
    */
   def transitiveDependantsOf(p: T): List[T] = depthFirstOf(p)(graph)
+}
+
+object DependantGraph {
+  def apply[T](nodes0: List[T])(nfn: T => Iterable[T]): DependantGraph[T] =
+    new DependantGraph[T] {
+      def nodes = nodes0
+      def dependenciesOf(t: T) = nfn(t)
+    }
 }

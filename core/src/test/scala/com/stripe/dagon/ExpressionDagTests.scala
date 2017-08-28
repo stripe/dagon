@@ -146,26 +146,6 @@ object ExpressionDagTests extends Properties("ExpressionDag") {
     noInc(noIncForm) && (noIncForm.evaluate == form.evaluate)
   }
 
-  /**
-   * This law is important for the rules to work as expected, and not have equivalent
-   * nodes appearing more than once in the Dag
-   */
-  property("Node structural equality implies Id equality") = forAll(genForm) { form =>
-    val (dag, id) = ExpressionDag(form, toLiteral)
-    dag.idToExp
-      .optionMap[BoolT](
-        new FunctionK[HMap[Id, Expr[Formula, ?]]#Pair, Lambda[x => Option[Boolean]]] {
-          def toFunction[T] = {
-            case (id, expr) =>
-              val node = expr.evaluate(dag.idToExp)
-              Some(dag.idOf(node) == id)
-            case _ =>
-              None
-          }
-        })
-      .forall(identity)
-  }
-
   // The normal Inc gen recursively calls the general dag Generator
   def genChainInc: Gen[Formula[Int]] =
     for {

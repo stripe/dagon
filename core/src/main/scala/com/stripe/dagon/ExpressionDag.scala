@@ -17,32 +17,44 @@
 
 package com.stripe.dagon
 
-sealed trait ExpressionDag[N[_]] { self =>
+sealed abstract class ExpressionDag[N[_]] { self =>
 
   /**
    * These have package visibility to test
    * the law that for all Expr, the node they
    * evaluate to is unique
    */
-  protected[dagon] def idToExp: HMap[Id, Expr[N, ?]]
-  protected def nodeToLiteral: FunctionK[N, Literal[N, ?]]
+  protected def idToExp: HMap[Id, Expr[N, ?]]
+  /**
+   * The set of roots that were added by addRoot.
+   * These are Ids that will always evaluate
+   * such that roots.forall(evaluateOption(_).isDefined)
+   */
   protected def roots: Set[Id[_]]
+  /**
+   * This is the next Id value which will be allocated
+   */
   protected def nextId: Int
+
+  /**
+   * Convert a N[T] to a Literal[T, N]
+   */
+  def toLiteral: FunctionK[N, Literal[N, ?]]
 
   private def copy(
       id2Exp: HMap[Id, Expr[N, ?]] = self.idToExp,
-      node2Literal: FunctionK[N, Literal[N, ?]] = self.nodeToLiteral,
+      node2Literal: FunctionK[N, Literal[N, ?]] = self.toLiteral,
       gcroots: Set[Id[_]] = self.roots,
       id: Int = self.nextId
   ): ExpressionDag[N] = new ExpressionDag[N] {
     def idToExp = id2Exp
     def roots = gcroots
-    def nodeToLiteral = node2Literal
+    def toLiteral = node2Literal
     def nextId = id
   }
 
   override def toString: String =
-    s"ExpressionDag(idToExp = $idToExp)"
+    s"ExpressionDag(idToExp = $idToExp, roots = $roots)"
 
   // This is a cache of Id[T] => Option[N[T]]
   private val idToN =
@@ -61,30 +73,17 @@ sealed trait ExpressionDag[N[_]] { self =>
   /**
    * Which ids are reachable from the roots
    */
-  private def reachableIds: Set[Id[_]] = {
-    // We actually don't care about the return type of the Set
-    // This is a constant function at the type level
-    type IdSet[t] = Set[Id[_]]
-    def expand(s: Set[Id[_]]): Set[Id[_]] = {
-      val f = new FunctionK[HMap[Id, Expr[N, ?]]#Pair, Lambda[x => Option[Set[Id[_]]]]] {
-        def toFunction[T] = {
-          case (id, Expr.Const(_)) if s(id) => Some(s)
-          case (id, Expr.Var(v)) if s(id) => Some(s + v)
-          case (id, Expr.Unary(id0, _)) if s(id) => Some(s + id0)
-          case (id, Expr.Binary(id0, id1, _)) if s(id) => Some((s + id0) + id1)
-          case _ => None
-        }
+  def reachableIds: Set[Id[_]] = {
+
+    def neighbors(i: Id[_]): List[Id[_]] =
+      idToExp(i) match {
+        case Expr.Const(_) => Nil
+        case Expr.Var(id) => id :: Nil
+        case Expr.Unary(id, _) => id :: Nil
+        case Expr.Binary(id0, id1, _) => id0 :: id1 :: Nil
       }
-      // Note this Stream must always be non-empty as long as roots are
-      // TODO: we don't need to use collect here, just .get on each id in s
-      idToExp.optionMap[IdSet](f).reduce(_ ++ _)
-    }
-    // call expand while we are still growing
-    def go(s: Set[Id[_]]): Set[Id[_]] = {
-      val step = expand(s)
-      if (step == s) s else go(step)
-    }
-    go(roots)
+
+    Graphs.reflexiveTransitiveClosure(roots.toList)(neighbors _).toSet
   }
 
   private def gc: ExpressionDag[N] = {
@@ -100,20 +99,16 @@ sealed trait ExpressionDag[N[_]] { self =>
    * the graph no longer changes.
    */
   def apply(rule: Rule[N]): ExpressionDag[N] = {
-    // for some reason, scala can't optimize this with tailrec
-    var prev: ExpressionDag[N] = null
-    var curr: ExpressionDag[N] = this
-    while (!(curr eq prev)) {
-      prev = curr
-      curr = curr.applyOnce(rule)
-    }
-    curr
-  }
 
-  /**
-   * Convert a N[T] to a Literal[T, N]
-   */
-  def toLiteral[T](n: N[T]): Literal[N, T] = nodeToLiteral(n)
+    @annotation.tailrec
+    def loop(d: ExpressionDag[N]): ExpressionDag[N] = {
+      val next = d.applyOnce(rule)
+      if (next eq d) next
+      else loop(next)
+    }
+
+    loop(this)
+  }
 
   /**
    * apply the rule at the first place that satisfies
@@ -124,24 +119,45 @@ sealed trait ExpressionDag[N[_]] { self =>
 
     val f = new FunctionK[HMap[Id, Expr[N, ?]]#Pair, Lambda[x => Option[DagT[x]]]] {
       def toFunction[U] = { (kv: (Id[U], Expr[N, U])) =>
-        val (id, _) = kv
-        val n1 = evaluate(id)
-        rule
-          .apply[U](self)(n1)
-          .filter(_ != n1)
-          .map { n2 =>
-            val (dag, newId) = ensure(n2)
+        val (id, expr) = kv
 
-            // We can't delete Ids which may have been shared
-            // publicly, and the ids may be embedded in many
-            // nodes. Instead we remap 'id' to be a pointer
-            // to 'newid'.
-            dag.copy(id2Exp = dag.idToExp + (id -> Expr.Var[N, U](newId))).gc
-          }
+        if (expr.isVar) None // Vars always point somewhere, apply the rule there
+        else {
+          val n1 = evaluate(id)
+          rule
+            .apply[U](self)(n1)
+            .filter(_ != n1)
+            .map { n2 =>
+              val (dag, newId) = ensure(n2)
+
+              // We can't delete Ids which may have been shared
+              // publicly, and the ids may be embedded in many
+              // nodes. Instead we remap 'id' to be a pointer
+              // to 'newid'.
+              dag.copy(id2Exp = dag.idToExp + (id -> Expr.Var[N, U](newId))).gc
+            }
+        }
       }
     }
 
     idToExp.optionMap[DagT](f).headOption.getOrElse(this)
+  }
+
+  /**
+   * Apply a rule at most cnt times.
+   */
+  def applyMax(rule: Rule[N], cnt: Int): ExpressionDag[N] = {
+
+    @annotation.tailrec
+    def loop(d: ExpressionDag[N], cnt: Int): ExpressionDag[N] =
+      if (cnt <= 0) d
+      else {
+        val next = d.applyOnce(rule)
+        if (next eq d) d
+        else loop(next, cnt - 1)
+      }
+
+    loop(this, cnt)
   }
 
   /**
@@ -151,52 +167,85 @@ sealed trait ExpressionDag[N[_]] { self =>
    */
   private def addExp[T](node: N[T], exp: Expr[N, T]): (ExpressionDag[N], Id[T]) = {
     require(!exp.isVar)
-
-    find(node) match {
-      case None =>
-        val nodeId = Id[T](nextId)
-        (copy(id2Exp = idToExp + (nodeId -> exp), id = nextId + 1), nodeId)
-      case Some(id) =>
-        (this, id)
-    }
+    val nodeId = Id[T](nextId)
+    (copy(id2Exp = idToExp + (nodeId -> exp), id = nextId + 1), nodeId)
   }
 
   /**
-   * This finds the Id[T] in the current graph that is equivalent
+   * Find all the nodes currently in the graph
+   */
+  lazy val allNodes: Set[N[_]] = {
+    type Node = Either[Id[_], Expr[N, _]]
+    def deps(n: Node): List[Node] = n match {
+      case Right(Expr.Const(_)) => Nil
+      case Right(Expr.Var(id)) => Left(id) :: Nil
+      case Right(Expr.Unary(id, _)) => Left(id) :: Nil
+      case Right(Expr.Binary(id0, id1, _)) => Left(id0) :: Left(id1) :: Nil
+      case Left(id) => idToExp.get(id).map(Right(_): Node).toList
+    }
+    val all = Graphs.reflexiveTransitiveClosure(roots.toList.map(Left(_): Node))(deps _)
+
+    val evalMemo = Expr.evaluateMemo(idToExp)
+    all.iterator.collect { case Right(expr) => evalMemo(expr) }.toSet
+  }
+
+  /**
+   * This finds an Id[T] in the current graph that is equivalent
    * to the given N[T]
    */
   def find[T](node: N[T]): Option[Id[T]] =
     nodeToId.getOrElseUpdate(
       node, {
-
-        /*
-         * This method looks through linearly evaluating nodes
-         * until we find the given node. Keep a cache of
-         * Expr -> N open for the entire call
-         */
-        val evalExpr = Expr.evaluateMemo(idToExp)
-
-        val f = new FunctionK[HMap[Id, Expr[N, ?]]#Pair, Lambda[x => Option[Id[x]]]] {
-          // Make sure to return the original Id, not a Id -> Var -> Expr
-          def toFunction[T1] = {
-            case (thisId, expr) =>
-              if (!expr.isVar && node == evalExpr(expr)) Some(thisId) else None
-          }
-        }
-
-        idToExp.optionMap(f) match {
+        findAll(node).filterNot { id => idToExp(id).isVar } match {
           case Stream.Empty =>
+            // if the node is the in the graph it has at least
+            // one non-Var node
             None
-          case id #:: Stream.Empty =>
-            // this cast is safe if node == expr.evaluate(idToExp) implies types match
-            Some(id).asInstanceOf[Option[Id[T]]]
-          case _ =>
-            // we'd like to make this an error; there should only ever
-            // be zero or one ids for a node.
-            None //sys.error(s"logic error, should only be one mapping: $node -> $others")
+          case nonEmpty =>
+            // there can be duplicate ids. Consider this case:
+            // Id(0) -> Expr.Unary(Id(1), fn)
+            // Id(1) -> Expr.Const(n1)
+            // Id(2) -> Expr.Unary(Id(3), fn)
+            // Id(3) -> Expr.Const(n2)
+            //
+            // then, a rule replaces n1 and n2 both with n3 Then, we'd have
+            // Id(1) -> Var(Id(4))
+            // Id(4) -> Expr.Const(n3)
+            // Id(3) -> Var(Id(4))
+            //
+            // and now, Id(0) and Id(2) both point to non-Var nodes, but also
+            // both are equal
+
+            // Prefer to return a root Id, if there is one
+            val matchingRoots = nonEmpty.filter(roots)
+            if (matchingRoots.isEmpty) Some(nonEmpty.min)
+            else Some(matchingRoots.min)
         }
       }
     )
+
+  /**
+   * Nodes can have multiple ids in the graph, this gives all of them
+   */
+  def findAll[T](node: N[T]): Stream[Id[T]] = {
+    /*
+     * This method looks through linearly evaluating nodes
+     * until we find the given node. Keep a cache of
+     * Expr -> N open for the entire call
+     */
+    val evalExpr = Expr.evaluateMemo(idToExp)
+
+    val f = new FunctionK[HMap[Id, Expr[N, ?]]#Pair, Lambda[x => Option[Id[x]]]] {
+      def toFunction[T1] = {
+        case (thisId, expr) =>
+          if (node == evalExpr(expr)) Some(thisId) else None
+      }
+    }
+
+    // this cast is safe if node == expr.evaluate(idToExp) implies types match
+    idToExp.optionMap(f).asInstanceOf[Stream[Id[T]]]
+  }
+
 
   /**
    * This throws if the node is missing, use find if this is not
@@ -226,14 +275,16 @@ sealed trait ExpressionDag[N[_]] { self =>
              * check this property with the typesystem easily, check it here
              */
             require(n == node,
-                    s"Equality or nodeToLiteral is incorrect: nodeToLit($node) = Const($n)")
+                    s"Equality or toLiteral is incorrect: nodeToLit($node) = Const($n)")
             addExp(node, Expr.Const(n))
           case Literal.Unary(prev, fn) =>
             val (exp1, idprev) = ensure(prev.evaluate)
             exp1.addExp(node, Expr.Unary(idprev, fn))
           case Literal.Binary(n1, n2, fn) =>
-            val (exp1, id1) = ensure(n1.evaluate)
-            val (exp2, id2) = exp1.ensure(n2.evaluate)
+            // use a common memoized function on both branches
+            val evalLit = Literal.evaluateMemo[N]
+            val (exp1, id1) = ensure(evalLit(n1))
+            val (exp2, id2) = exp1.ensure(evalLit(n2))
             exp2.addExp(node, Expr.Binary(id1, id2, fn))
         }
     }
@@ -266,14 +317,6 @@ sealed trait ExpressionDag[N[_]] { self =>
       .map(fanOut)
       .getOrElse(0)
 
-  @annotation.tailrec
-  private def dependsOn(expr: Expr[N, _], node: N[_]): Boolean = expr match {
-    case Expr.Const(_) => false
-    case Expr.Var(id) => dependsOn(idToExp(id), node)
-    case Expr.Unary(id, _) => evaluate(id) == node
-    case Expr.Binary(id0, id1, _) => evaluate(id0) == node || evaluate(id1) == node
-  }
-
   /**
    * Returns 0 if the node is absent, which is true
    * use .contains(n) to check for containment
@@ -289,22 +332,48 @@ sealed trait ExpressionDag[N[_]] { self =>
    * Is this node a root of this graph
    */
   def isRoot(n: N[_]): Boolean =
-    roots(idOf(n))
+    findAll(n).exists(roots)
 
-  def contains(node: N[_]): Boolean = find(node).isDefined
+  /**
+   * Is this node in this DAG
+   */
+  def contains(node: N[_]): Boolean =
+    find(node).isDefined
 
   /**
    * list all the nodes that depend on the given node
    */
   def dependentsOf(node: N[_]): Set[N[_]] = {
+
+    def dependsOn(expr: Expr[N, _]): Boolean = expr match {
+      case Expr.Const(_) => false
+      case Expr.Var(id) => sys.error(s"logic error: Var($id)")
+      case Expr.Unary(id, _) => evaluate(id) == node
+      case Expr.Binary(id0, id1, _) => evaluate(id0) == node || evaluate(id1) == node
+    }
+
     // TODO, we can do a much better algorithm that builds this function
     // for all nodes in the dag
     val pointsToNode = new FunctionK[HMap[Id, Expr[N, ?]]#Pair, Lambda[x => Option[N[x]]]] {
       def toFunction[T] = {
-        case (id, expr) => if (dependsOn(expr, node)) Some(evaluate(id)) else None
+        case (id, expr) =>
+          // We can ignore Vars here, since all vars point to a final expression
+          if ((!expr.isVar) && dependsOn(expr)) Some(evaluate(id))
+          else None
       }
     }
     idToExp.optionMap(pointsToNode).toSet
+  }
+
+  /**
+   * Return all dependendants of a given node.
+   * Does not include itself
+   */
+  def transitiveDependentsOf(p: N[_]): Set[N[_]] = {
+    def nfn(n: N[Any]): List[N[Any]] =
+      dependentsOf(n).toList.asInstanceOf[List[N[Any]]]
+
+    Graphs.depthFirstOf(p.asInstanceOf[N[Any]])(nfn _).toSet
   }
 }
 
@@ -313,7 +382,7 @@ object ExpressionDag {
   def empty[N[_]](n2l: FunctionK[N, Literal[N, ?]]): ExpressionDag[N] =
     new ExpressionDag[N] {
       val idToExp = HMap.empty[Id, Expr[N, ?]]
-      val nodeToLiteral = n2l
+      val toLiteral = n2l
       val roots = Set.empty[Id[_]]
       val nextId = 0
     }
