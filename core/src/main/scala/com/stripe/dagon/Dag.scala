@@ -17,7 +17,12 @@
 
 package com.stripe.dagon
 
-sealed abstract class ExpressionDag[N[_]] { self =>
+/**
+ * Represents a directed acyclic graph (DAG).
+ *
+ * The type N[_] represents the type of nodes in the graph.
+ */
+sealed abstract class Dag[N[_]] { self =>
 
   /**
    * These have package visibility to test
@@ -25,53 +30,71 @@ sealed abstract class ExpressionDag[N[_]] { self =>
    * evaluate to is unique
    */
   protected def idToExp: HMap[Id, Expr[N, ?]]
+
   /**
    * The set of roots that were added by addRoot.
    * These are Ids that will always evaluate
    * such that roots.forall(evaluateOption(_).isDefined)
    */
   protected def roots: Set[Id[_]]
+
   /**
    * This is the next Id value which will be allocated
    */
   protected def nextId: Int
 
   /**
-   * Convert a N[T] to a Literal[T, N]
+   * Convert a N[T] to a Literal[T, N].
    */
   def toLiteral: FunctionK[N, Literal[N, ?]]
 
+  // Caches polymorphic functions of type T => Option[N[T]]
+  private val idToN: HCache[Id, Lambda[t => Option[N[t]]]] =
+    HCache.empty[Id, Lambda[t => Option[N[t]]]]
+
+  // Caches polymorphic functions of type N[T] => Option[T]
+  private val nodeToId: HCache[N, Lambda[t => Option[Id[t]]]] =
+    HCache.empty[N, Lambda[t => Option[Id[t]]]]
+
+  // Convenient method to produce new, modified DAGs based on this
+  // one.
   private def copy(
       id2Exp: HMap[Id, Expr[N, ?]] = self.idToExp,
       node2Literal: FunctionK[N, Literal[N, ?]] = self.toLiteral,
       gcroots: Set[Id[_]] = self.roots,
       id: Int = self.nextId
-  ): ExpressionDag[N] = new ExpressionDag[N] {
+  ): Dag[N] = new Dag[N] {
     def idToExp = id2Exp
     def roots = gcroots
     def toLiteral = node2Literal
     def nextId = id
   }
 
-  override def toString: String =
-    s"ExpressionDag(idToExp = $idToExp, roots = $roots)"
+  // Produce a new DAG that is equivalent to this one, but which frees
+  // orphaned nodes and other internal state which may no longer be
+  // needed.
+  private def gc: Dag[N] = {
+    val keepers = reachableIds
+    if (idToExp.forallKeys(keepers)) this
+    else copy(id2Exp = idToExp.filterKeys(keepers))
+  }
 
-  // This is a cache of Id[T] => Option[N[T]]
-  private val idToN =
-    HCache.empty[Id, Lambda[t => Option[N[t]]]]
-  private val nodeToId =
-    HCache.empty[N, Lambda[t => Option[Id[t]]]]
+  /**
+   * String representation of this DAG.
+   */
+  override def toString: String =
+    s"Dag(idToExp = $idToExp, roots = $roots)"
 
   /**
    * Add a GC root, or tail in the DAG, that can never be deleted.
    */
-  def addRoot[T](node: N[T]): (ExpressionDag[N], Id[T]) = {
+  def addRoot[T](node: N[T]): (Dag[N], Id[T]) = {
     val (dag, id) = ensure(node)
     (dag.copy(gcroots = roots + id), id)
   }
 
   /**
-   * Which ids are reachable from the roots
+   * Which ids are reachable from the roots?
    */
   def reachableIds: Set[Id[_]] = {
 
@@ -86,22 +109,14 @@ sealed abstract class ExpressionDag[N[_]] { self =>
     Graphs.reflexiveTransitiveClosure(roots.toList)(neighbors _).toSet
   }
 
-  private def gc: ExpressionDag[N] = {
-    val goodIds = reachableIds
-    val toKeepI2E = idToExp.filter(new FunctionK[HMap[Id, Expr[N, ?]]#Pair, BoolT] {
-      def toFunction[T] = { case (id, _) => goodIds(id) }
-    })
-    copy(id2Exp = toKeepI2E)
-  }
-
   /**
    * Apply the given rule to the given dag until
    * the graph no longer changes.
    */
-  def apply(rule: Rule[N]): ExpressionDag[N] = {
+  def apply(rule: Rule[N]): Dag[N] = {
 
     @annotation.tailrec
-    def loop(d: ExpressionDag[N]): ExpressionDag[N] = {
+    def loop(d: Dag[N]): Dag[N] = {
       val next = d.applyOnce(rule)
       if (next eq d) next
       else loop(next)
@@ -114,8 +129,8 @@ sealed abstract class ExpressionDag[N[_]] { self =>
    * apply the rule at the first place that satisfies
    * it, and return from there.
    */
-  def applyOnce(rule: Rule[N]): ExpressionDag[N] = {
-    type DagT[T] = ExpressionDag[N]
+  def applyOnce(rule: Rule[N]): Dag[N] = {
+    type DagT[T] = Dag[N]
 
     val f = new FunctionK[HMap[Id, Expr[N, ?]]#Pair, Lambda[x => Option[DagT[x]]]] {
       def toFunction[U] = { (kv: (Id[U], Expr[N, U])) =>
@@ -134,7 +149,7 @@ sealed abstract class ExpressionDag[N[_]] { self =>
               // publicly, and the ids may be embedded in many
               // nodes. Instead we remap 'id' to be a pointer
               // to 'newid'.
-              dag.copy(id2Exp = dag.idToExp + (id -> Expr.Var[N, U](newId))).gc
+              dag.copy(id2Exp = dag.idToExp.updated(id, Expr.Var[N, U](newId))).gc
             }
         }
       }
@@ -146,10 +161,10 @@ sealed abstract class ExpressionDag[N[_]] { self =>
   /**
    * Apply a rule at most cnt times.
    */
-  def applyMax(rule: Rule[N], cnt: Int): ExpressionDag[N] = {
+  def applyMax(rule: Rule[N], cnt: Int): Dag[N] = {
 
     @annotation.tailrec
-    def loop(d: ExpressionDag[N], cnt: Int): ExpressionDag[N] =
+    def loop(d: Dag[N], cnt: Int): Dag[N] =
       if (cnt <= 0) d
       else {
         val next = d.applyOnce(rule)
@@ -165,10 +180,10 @@ sealed abstract class ExpressionDag[N[_]] { self =>
    *
    * Note, Expr must never be a Var
    */
-  private def addExp[T](node: N[T], exp: Expr[N, T]): (ExpressionDag[N], Id[T]) = {
+  private def addExp[T](node: N[T], exp: Expr[N, T]): (Dag[N], Id[T]) = {
     require(!exp.isVar)
     val nodeId = Id[T](nextId)
-    (copy(id2Exp = idToExp + (nodeId -> exp), id = nextId + 1), nodeId)
+    (copy(id2Exp = idToExp.updated(nodeId, exp), id = nextId + 1), nodeId)
   }
 
   /**
@@ -264,7 +279,7 @@ sealed abstract class ExpressionDag[N[_]] { self =>
    * at most one id in the graph. Put another way, for all
    * Id[T] in the graph evaluate(id) is distinct.
    */
-  protected def ensure[T](node: N[T]): (ExpressionDag[N], Id[T]) =
+  protected def ensure[T](node: N[T]): (Dag[N], Id[T]) =
     find(node) match {
       case Some(id) => (this, id)
       case None =>
@@ -377,10 +392,10 @@ sealed abstract class ExpressionDag[N[_]] { self =>
   }
 }
 
-object ExpressionDag {
+object Dag {
 
-  def empty[N[_]](n2l: FunctionK[N, Literal[N, ?]]): ExpressionDag[N] =
-    new ExpressionDag[N] {
+  def empty[N[_]](n2l: FunctionK[N, Literal[N, ?]]): Dag[N] =
+    new Dag[N] {
       val idToExp = HMap.empty[Id, Expr[N, ?]]
       val toLiteral = n2l
       val roots = Set.empty[Id[_]]
@@ -388,9 +403,9 @@ object ExpressionDag {
     }
 
   /**
-   * This creates a new ExpressionDag rooted at the given tail node
+   * This creates a new Dag rooted at the given tail node
    */
-  def apply[T, N[_]](n: N[T], nodeToLit: FunctionK[N, Literal[N, ?]]): (ExpressionDag[N], Id[T]) =
+  def apply[T, N[_]](n: N[T], nodeToLit: FunctionK[N, Literal[N, ?]]): (Dag[N], Id[T]) =
     empty(nodeToLit).addRoot(n)
 
   /**

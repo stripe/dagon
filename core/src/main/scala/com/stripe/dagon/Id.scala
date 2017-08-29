@@ -4,7 +4,7 @@ package com.stripe.dagon
  * The Expressions are assigned Ids. Each Id is associated with
  * an expression of inner type T.
  *
- * This is done to put an indirection in the ExpressionDag that
+ * This is done to put an indirection in the Dag that
  * allows us to rewrite nodes by simply replacing the expressions
  * associated with given Ids.
  *

@@ -88,7 +88,7 @@ object DataFlowTest {
      * we use object to get good toString for debugging
      */
     object composeOptionMapped extends PartialRule[Flow] {
-      def applyWhere[T](on: ExpressionDag[Flow]) = {
+      def applyWhere[T](on: Dag[Flow]) = {
         case (OptionMapped(inner @ OptionMapped(s, fn0), fn1)) if on.fanOut(inner) == 1 =>
           OptionMapped(s, ComposedOM(fn0, fn1))
       }
@@ -98,7 +98,7 @@ object DataFlowTest {
      * f.concatMap(fn1).concatMap(fn2) == f.concatMap { t => fn1(t).flatMap(fn2) }
      */
     object composeConcatMap extends PartialRule[Flow] {
-      def applyWhere[T](on: ExpressionDag[Flow]) = {
+      def applyWhere[T](on: Dag[Flow]) = {
         case (ConcatMapped(inner @ ConcatMapped(s, fn0), fn1)) if on.fanOut(inner) == 1 =>
           ConcatMapped(s, ComposedCM(fn0, fn1))
       }
@@ -109,7 +109,7 @@ object DataFlowTest {
      * (a ++ b).optionMap(fn) == (a.optionMap(fn) ++ b.optionMap(fn))
      */
     object mergePullDown extends PartialRule[Flow] {
-      def applyWhere[T](on: ExpressionDag[Flow]) = {
+      def applyWhere[T](on: Dag[Flow]) = {
         case (ConcatMapped(merge @ Merge(a, b), fn)) if on.fanOut(merge) == 1 =>
           a.concatMap(fn) ++ b.concatMap(fn)
         case (OptionMapped(merge @ Merge(a, b), fn)) if on.fanOut(merge) == 1 =>
@@ -122,7 +122,7 @@ object DataFlowTest {
      * the knowledge about which fns potentially expand the size
      */
     object optionMapToConcatMap extends PartialRule[Flow] {
-      def applyWhere[T](on: ExpressionDag[Flow]) = {
+      def applyWhere[T](on: Dag[Flow]) = {
         case OptionMapped(of, fn) => ConcatMapped(of, OptionToConcatFn(fn))
       }
     }
@@ -131,7 +131,7 @@ object DataFlowTest {
      * right associate merges
      */
     object rightMerge extends PartialRule[Flow] {
-      def applyWhere[T](on: ExpressionDag[Flow]) = {
+      def applyWhere[T](on: Dag[Flow]) = {
         case Merge(left@Merge(a, b), c) if on.fanOut(left) == 1 =>
           Merge(a, Merge(b, c))
       }
@@ -141,7 +141,7 @@ object DataFlowTest {
      *  evaluate single fanout sources
      */
     object evalSource extends PartialRule[Flow] {
-      def applyWhere[T](on: ExpressionDag[Flow]) = {
+      def applyWhere[T](on: Dag[Flow]) = {
         case OptionMapped(src @ IteratorSource(it), fn) if on.fanOut(src) == 1 =>
           IteratorSource(it.flatMap(fn(_).toIterator))
         case ConcatMapped(src @ IteratorSource(it), fn) if on.fanOut(src) == 1 =>
@@ -156,7 +156,7 @@ object DataFlowTest {
     }
 
     object removeTag extends PartialRule[Flow] {
-      def applyWhere[T](on: ExpressionDag[Flow]) = {
+      def applyWhere[T](on: Dag[Flow]) = {
         case Tagged(in, _) => in
       }
     }
@@ -229,13 +229,13 @@ object DataFlowTest {
       Arbitrary(genFlow[T](implicitly[Arbitrary[T]].arbitrary))
 
 
-    def expDagGen[T: Cogen](g: Gen[T]): Gen[ExpressionDag[Flow]] = {
-      val empty = ExpressionDag.empty[Flow](toLiteral)
+    def expDagGen[T: Cogen](g: Gen[T]): Gen[Dag[Flow]] = {
+      val empty = Dag.empty[Flow](toLiteral)
 
       Gen.frequency((1, Gen.const(empty)), (10, genFlow(g).map { f => empty.addRoot(f)._1 }))
     }
 
-    def arbExpDag[T: Arbitrary: Cogen]: Arbitrary[ExpressionDag[Flow]] =
+    def arbExpDag[T: Arbitrary: Cogen]: Arbitrary[Dag[Flow]] =
       Arbitrary(expDagGen[T](implicitly[Arbitrary[T]].arbitrary))
   }
 }
@@ -258,7 +258,7 @@ class DataFlowTest extends FunSuite {
 
     import Flow._
 
-    val res = ExpressionDag.applyRule(tail, toLiteral, mergePullDown.orElse(composeOptionMapped))
+    val res = Dag.applyRule(tail, toLiteral, mergePullDown.orElse(composeOptionMapped))
 
     res match {
       case Merge(OptionMapped(s1, fn1), OptionMapped(s2, fn2)) =>
@@ -273,7 +273,7 @@ class DataFlowTest extends FunSuite {
 
     val f = Flow(it1).map(_ * 2) ++ Flow(it2).filter(_ % 7 == 0)
 
-    ExpressionDag.applyRule(f, Flow.toLiteral, Flow.allRules) match {
+    Dag.applyRule(f, Flow.toLiteral, Flow.allRules) match {
       case Flow.IteratorSource(it) =>
         assert(it.toList == (it1.map(_ * 2) ++ (it2.filter(_ % 7 == 0))).toList)
       case nonSrc =>
@@ -285,12 +285,12 @@ class DataFlowTest extends FunSuite {
   test("fanOut matches") {
 
     def law(f: Flow[Int], rule: Rule[Flow], maxApplies: Int) = {
-      val (dag, id) = ExpressionDag(f, Flow.toLiteral)
+      val (dag, id) = Dag(f, Flow.toLiteral)
 
       val optimizedDag = dag.applyMax(rule, maxApplies)
       val optF = optimizedDag.evaluate(id)
 
-      val depGraph = DependantGraph[Flow[Any]](Flow.transitiveDeps(optF))(Flow.dependenciesOf _)
+      val depGraph = SimpleDag[Flow[Any]](Flow.transitiveDeps(optF))(Flow.dependenciesOf _)
 
       def fanOut(f: Flow[Any]): Int = {
         val internal = depGraph.fanOut(f).getOrElse(0)
@@ -327,14 +327,14 @@ class DataFlowTest extends FunSuite {
   test("we either totally evaluate or have Iterators with fanOut") {
 
     def law(f: Flow[Int]) = {
-      val (dag, id) = ExpressionDag(f, Flow.toLiteral)
+      val (dag, id) = Dag(f, Flow.toLiteral)
       val optDag = dag(Flow.allRules)
       val optF = optDag.evaluate(id)
 
       optF match {
         case Flow.IteratorSource(_) => succeed
         case nonEval =>
-          val depGraph = DependantGraph[Flow[Any]](Flow.transitiveDeps(nonEval))(Flow.dependenciesOf _)
+          val depGraph = SimpleDag[Flow[Any]](Flow.transitiveDeps(nonEval))(Flow.dependenciesOf _)
 
           val fansOut = depGraph
             .nodes
@@ -353,7 +353,7 @@ class DataFlowTest extends FunSuite {
   test("addRoot adds roots") {
     implicit val dag = Flow.arbExpDag[Int]
 
-    forAll { (d: ExpressionDag[Flow], f: Flow[Int]) =>
+    forAll { (d: Dag[Flow], f: Flow[Int]) =>
 
       val (next, id) = d.addRoot(f)
       assert(next.isRoot(f))
@@ -362,9 +362,9 @@ class DataFlowTest extends FunSuite {
     }
   }
 
-  test("all ExpressionDag.allNodes agrees with Flow.transitiveDeps") {
+  test("all Dag.allNodes agrees with Flow.transitiveDeps") {
     forAll { (f: Flow[Int], rule: Rule[Flow], max: Int) =>
-      val (dag, id) = ExpressionDag(f, Flow.toLiteral)
+      val (dag, id) = Dag(f, Flow.toLiteral)
 
       val optimizedDag = dag.applyMax(rule, max)
 
@@ -373,9 +373,9 @@ class DataFlowTest extends FunSuite {
     }
   }
 
-  test("ExpressionDag: findAll(n).forall(evaluate(_) == n)") {
+  test("Dag: findAll(n).forall(evaluate(_) == n)") {
     forAll { (f: Flow[Int], rule: Rule[Flow], max: Int) =>
-      val (dag, id) = ExpressionDag(f, Flow.toLiteral)
+      val (dag, id) = Dag(f, Flow.toLiteral)
 
       val optimizedDag = dag.applyMax(rule, max)
 
@@ -390,7 +390,7 @@ class DataFlowTest extends FunSuite {
   test("apply the empty rule returns eq dag") {
     implicit val dag = Flow.arbExpDag[Int]
 
-    forAll { (d: ExpressionDag[Flow]) =>
+    forAll { (d: Dag[Flow]) =>
       assert(d(Rule.empty[Flow]) eq d)
     }
   }
@@ -398,11 +398,11 @@ class DataFlowTest extends FunSuite {
 
   test("rules are idempotent") {
     def law(f: Flow[Int], rule: Rule[Flow]) = {
-      val (dag, id) = ExpressionDag(f, Flow.toLiteral)
+      val (dag, id) = Dag(f, Flow.toLiteral)
       val optimizedDag = dag(rule)
       val optF = optimizedDag.evaluate(id)
 
-      val (dag2, id2) = ExpressionDag(optF, Flow.toLiteral)
+      val (dag2, id2) = Dag(optF, Flow.toLiteral)
       val optimizedDag2 = dag2(rule)
       val optF2 = optimizedDag2.evaluate(id2)
 
@@ -412,12 +412,12 @@ class DataFlowTest extends FunSuite {
     forAll(law _)
   }
 
-  test("dependentsOf matches DependantGraph.dependantsOf") {
+  test("dependentsOf matches SimpleDag.dependantsOf") {
     forAll { (f: Flow[Int], rule: Rule[Flow], max: Int) =>
-      val (dag, id) = ExpressionDag(f, Flow.toLiteral)
+      val (dag, id) = Dag(f, Flow.toLiteral)
 
       val optimizedDag = dag.applyMax(rule, max)
-      val depGraph = DependantGraph[Flow[Any]](Flow.transitiveDeps(optimizedDag.evaluate(id)))(Flow.dependenciesOf _)
+      val depGraph = SimpleDag[Flow[Any]](Flow.transitiveDeps(optimizedDag.evaluate(id)))(Flow.dependenciesOf _)
 
       optimizedDag.allNodes.foreach { n =>
         assert(optimizedDag.dependentsOf(n) == depGraph.dependantsOf(n).fold(Set.empty[Flow[Any]])(_.toSet))
@@ -429,7 +429,7 @@ class DataFlowTest extends FunSuite {
 
   test("contains(n) is the same as allNodes.contains(n)") {
     forAll { (f: Flow[Int], rule: Rule[Flow], max: Int, check: List[Flow[Int]]) =>
-      val (dag, _) = ExpressionDag(f, Flow.toLiteral)
+      val (dag, _) = Dag(f, Flow.toLiteral)
 
       val optimizedDag = dag.applyMax(rule, max)
 
@@ -441,7 +441,7 @@ class DataFlowTest extends FunSuite {
 
   test("all roots can be evaluated") {
     forAll { (roots: List[Flow[Int]], rule: Rule[Flow], max: Int) =>
-      val dag = ExpressionDag.empty[Flow](Flow.toLiteral)
+      val dag = Dag.empty[Flow](Flow.toLiteral)
 
       // This is pretty slow with tons of roots, take 10
       val (finalDag, allRoots) = roots.take(10).foldLeft((dag, Set.empty[Id[Int]])) { case ((d, s), f) =>
@@ -459,7 +459,7 @@ class DataFlowTest extends FunSuite {
 
   test("removeTag removes all .tagged") {
     forAll { f: Flow[Int] =>
-      val (dag, id) = ExpressionDag(f, Flow.toLiteral)
+      val (dag, id) = Dag(f, Flow.toLiteral)
       val optDag = dag(Flow.allRules) // includes removeTagged
 
       optDag.allNodes.foreach {
@@ -471,7 +471,7 @@ class DataFlowTest extends FunSuite {
 
   test("reachableIds are only the set of nodes") {
     forAll { (f: Flow[Int], rule: Rule[Flow], max: Int) =>
-      val (dag, id) = ExpressionDag(f, Flow.toLiteral)
+      val (dag, id) = Dag(f, Flow.toLiteral)
 
       val optimizedDag = dag.applyMax(rule, max)
 

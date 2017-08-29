@@ -23,7 +23,7 @@ import Graphs._
  * Given Dag and a List of immutable nodes, and a function to get
  * dependencies, compute the dependants (reverse the graph)
  */
-abstract class DependantGraph[T] {
+abstract class SimpleDag[T] {
   def nodes: List[T]
   def dependenciesOf(t: T): Iterable[T]
 
@@ -58,9 +58,9 @@ abstract class DependantGraph[T] {
   def transitiveDependantsOf(p: T): List[T] = depthFirstOf(p)(graph)
 }
 
-object DependantGraph {
-  def apply[T](nodes0: List[T])(nfn: T => Iterable[T]): DependantGraph[T] =
-    new DependantGraph[T] {
+object SimpleDag {
+  def apply[T](nodes0: List[T])(nfn: T => Iterable[T]): SimpleDag[T] =
+    new SimpleDag[T] {
       def nodes = nodes0
       def dependenciesOf(t: T) = nfn(t)
     }

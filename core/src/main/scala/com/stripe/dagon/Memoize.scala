@@ -22,17 +22,8 @@ object Memoize {
     // but mutating the Map inside of the call-by-name value causes
     // some issues in some versions of scala. It is
     // safer to use a mutable pointer to an immutable Map.
-    var cache = Map.empty[A, B]
-    def getOrElseUpdate(a: A, b: => B): B =
-      cache.get(a) match {
-        case Some(res) => res
-        case None =>
-          val res = b
-          cache = cache.updated(a, res)
-          res
-      }
-
-    lazy val g: A => B = (a: A) => getOrElseUpdate(a, f(a, g))
+    val cache = Cache.empty[A, B]
+    lazy val g: A => B = (a: A) => cache.getOrElseUpdate(a, f(a, g))
     g
   }
 
@@ -44,9 +35,8 @@ object Memoize {
   def functionK[A[_], B[_]](f: RecursiveK[A, B]): FunctionK[A, B] = {
     val hcache = HCache.empty[A, B]
     lazy val hg: FunctionK[A, B] = new FunctionK[A, B] {
-      def toFunction[T] = { at =>
-        hcache.getOrElseUpdate(at, f((at, hg)))
-      }
+      def toFunction[T]: A[T] => B[T] =
+        at => hcache.getOrElseUpdate(at, f((at, hg)))
     }
     hg
   }
