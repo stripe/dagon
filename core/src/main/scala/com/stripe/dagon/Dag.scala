@@ -75,8 +75,8 @@ sealed abstract class Dag[N[_]] { self =>
   // needed.
   private def gc: Dag[N] = {
     val keepers = reachableIds
-    val kept = idToExp.filter { case (id, _) => keepers(id) }
-    if (idToExp.size == kept.size) this else copy(id2Exp = kept)
+    if (idToExp.forallKeys(keepers)) this
+    else copy(id2Exp = idToExp.filterKeys(keepers))
   }
 
   /**

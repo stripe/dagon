@@ -60,14 +60,11 @@ final class HMap[K[_], V[_]](protected val map: Map[K[_], V[_]]) {
 
   def size: Int = map.size
 
-  def exists(p: ((K[_], V[_])) => Boolean): Boolean =
-    map.exists(p)
+  def forallKeys(p: K[_] => Boolean): Boolean =
+    map.forall { case (k, _) => p(k) }
 
-  def forall(p: ((K[_], V[_])) => Boolean): Boolean =
-    map.forall(p)
-  
-  def filter(p: ((K[_], V[_])) => Boolean): HMap[K, V] =
-    HMap.from[K, V](map.filter(p))
+  def filterKeys(p: K[_] => Boolean): HMap[K, V] =
+    HMap.from[K, V](map.filter { case (k, _) => p(k) })
 
   def keysOf[T](v: V[T]): Set[K[T]] =
     map.collect {
