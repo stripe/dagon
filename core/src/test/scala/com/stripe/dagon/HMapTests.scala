@@ -28,27 +28,27 @@ import Arbitrary.arbitrary
  */
 object HMapTests extends Properties("HMap") {
 
-  case class Key[T](key: Byte)
+  case class Key[T](key: Int)
 
   object Key {
     implicit def arbitraryKey[A]: Arbitrary[Key[A]] =
-      Arbitrary(arbitrary[Byte].map(Key(_)))
+      Arbitrary(arbitrary[Int].map(n => Key(n & 0xff)))
     implicit def cogenKey[A]: Cogen[Key[A]] =
-      Cogen[Byte].contramap(_.key)
+      Cogen[Int].contramap(_.key)
   }
 
-  case class Value[T](value: Byte)
+  case class Value[T](value: Int)
 
   object Value {
     implicit def arbitraryValue[A]: Arbitrary[Value[A]] =
-      Arbitrary(arbitrary[Byte].map(Value(_)))
+      Arbitrary(arbitrary[Int].map(n => Value(n & 0xff)))
     implicit def cogenValue[A]: Cogen[Value[A]] =
-      Cogen[Byte].contramap(_.value)
+      Cogen[Int].contramap(_.value)
   }
 
   type H = HMap[Key, Value]
-  type K = Key[Byte]
-  type V = Value[Byte]
+  type K = Key[Int]
+  type V = Value[Int]
 
   def fromPairs(kvs: Iterable[(K, V)]): H =
     kvs.foldLeft(HMap.empty[Key, Value])(_ + _)
@@ -62,7 +62,7 @@ object HMapTests extends Properties("HMap") {
   type FK = FunctionK[H#Pair, Lambda[x => Option[Value[x]]]]
 
   implicit val arbitraryFunctionK: Arbitrary[FK] =
-    Arbitrary(arbitrary[(Byte, Byte) => Option[Byte]].map { f =>
+    Arbitrary(arbitrary[(Int, Int) => Option[Int]].map { f =>
       new FK {
         def toFunction[T] = { case (Key(m), Value(n)) => f(m, n).map(Value(_)) }
       }
