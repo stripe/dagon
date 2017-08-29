@@ -66,6 +66,9 @@ final class HMap[K[_], V[_]](protected val map: Map[K[_], V[_]]) {
   def filterKeys(p: K[_] => Boolean): HMap[K, V] =
     HMap.from[K, V](map.filter { case (k, _) => p(k) })
 
+  def keySet: Set[K[_]] =
+    map.keySet
+
   def keysOf[T](v: V[T]): Set[K[T]] =
     map.collect {
       case (k, w) if v == w => k.asInstanceOf[K[T]]
@@ -80,6 +83,6 @@ object HMap {
   def empty[K[_], V[_]]: HMap[K, V] =
     from[K, V](Map.empty[K[_], V[_]])
 
-  private def from[K[_], V[_]](m: Map[K[_], V[_]]): HMap[K, V] =
+  def from[K[_], V[_]](m: Map[K[_], V[_]]): HMap[K, V] =
     new HMap[K, V](m)
 }
