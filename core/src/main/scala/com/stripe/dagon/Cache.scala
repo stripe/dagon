@@ -1,16 +1,16 @@
 package com.stripe.dagon
 
 /**
- * This is a useful cache for memoizing natural transformations.
+ * This is a useful cache for memoizing function.
  *
  * The cache is implemented using a mutable pointer to an immutable
  * map value. In the worst-case, race conditions might cause us to
  * lose cache values (i.e. compute some keys twice), but we will never
  * produce incorrect values.
  */
-sealed class HCache[K[_], V[_]] private (init: HMap[K, V]) {
+sealed class Cache[K, V] private (init: Map[K, V]) {
 
-  private[this] var hmap: HMap[K, V] = init
+  private[this] var map: Map[K, V] = init
 
   /**
    * Given a key, either return a cached value, or compute, store, and
@@ -22,21 +22,21 @@ sealed class HCache[K[_], V[_]] private (init: HMap[K, V]) {
    *
    * For example:
    *
-   *     def greet(i: Int): Option[Int] = {
+   *     def greet(i: Int): Int = {
    *       println("hi")
-   *       Option(i + 1)
+   *       i + 1
    *     }
    *
-   *     val c = Cache.empty[Option, Option]
-   *     c.getOrElseUpdate(Some(1), greet(1)) // says hi, returns Some(2)
-   *     c.getOrElseUpdate(Some(1), greet(1)) // just returns Some(2)
+   *     val c = Cache.empty[Int, Int]
+   *     c.getOrElseUpdate(1, greet(1)) // says hi, returns 2
+   *     c.getOrElseUpdate(1, greet(1)) // just returns 2
    */
-  def getOrElseUpdate[T](k: K[T], v: => V[T]): V[T] =
-    hmap.get(k) match {
+  def getOrElseUpdate(k: K, v: => V): V =
+    map.get(k) match {
       case Some(exists) => exists
       case None =>
         val res = v
-        hmap = hmap + (k -> res)
+        map = map.updated(k, res)
         res
     }
 
@@ -46,14 +46,14 @@ sealed class HCache[K[_], V[_]] private (init: HMap[K, V]) {
    * The two caches will start with the same values, but will be
    * independently updated.
    */
-  def duplicate: HCache[K, V] =
-    new HCache(hmap)
+  def duplicate: Cache[K, V] =
+    new Cache(map)
 
   /**
    * Access the currently-cached keys and values as a map.
    */
-  def toHMap: HMap[K, V] =
-    hmap
+  def toMap: Map[K, V] =
+    map
 
   /**
    * Forget all cached keys and values.
@@ -62,9 +62,9 @@ sealed class HCache[K[_], V[_]] private (init: HMap[K, V]) {
    * Cache.empty[K, V].
    */
   def reset(): Unit =
-    hmap = HMap.empty[K, V]
+    map = Map.empty
 }
 
-object HCache {
-  def empty[K[_], V[_]]: HCache[K, V] = new HCache(HMap.empty)
+object Cache {
+  def empty[K, V]: Cache[K, V] = new Cache(Map.empty)
 }

@@ -4,8 +4,8 @@ package com.stripe.dagon
  * Often a partial function is an easier way to express rules
  */
 trait PartialRule[N[_]] extends Rule[N] {
-  final def apply[T](on: ExpressionDag[N]): N[T] => Option[N[T]] =
+  final def apply[T](on: Dag[N]): N[T] => Option[N[T]] =
     applyWhere[T](on).lift
 
-  def applyWhere[T](on: ExpressionDag[N]): PartialFunction[N[T], N[T]]
+  def applyWhere[T](on: Dag[N]): PartialFunction[N[T], N[T]]
 }

@@ -40,6 +40,9 @@ final class HMap[K[_], V[_]](protected val map: Map[K[_], V[_]]) {
   override def hashCode: Int =
     map.hashCode
 
+  def updated[T](k: K[T], v: V[T]): HMap[K, V] =
+    HMap.from[K, V](map.updated(k, v))
+
   def +[T](kv: (K[T], V[T])): HMap[K, V] =
     HMap.from[K, V](map + kv)
 
@@ -55,10 +58,16 @@ final class HMap[K[_], V[_]](protected val map: Map[K[_], V[_]]) {
   def contains[T](id: K[T]): Boolean =
     get(id).isDefined
 
-  def filter(pred: FunctionK[Pair, BoolT]): HMap[K, V] = {
-    val filtered = map.asInstanceOf[Map[K[Any], V[Any]]].filter(pred.apply[Any])
-    HMap.from[K, V](filtered.asInstanceOf[Map[K[_], V[_]]])
-  }
+  def size: Int = map.size
+
+  def exists(p: ((K[_], V[_])) => Boolean): Boolean =
+    map.exists(p)
+
+  def forall(p: ((K[_], V[_])) => Boolean): Boolean =
+    map.forall(p)
+  
+  def filter(p: ((K[_], V[_])) => Boolean): HMap[K, V] =
+    HMap.from[K, V](map.filter(p))
 
   def keysOf[T](v: V[T]): Set[K[T]] =
     map.collect {

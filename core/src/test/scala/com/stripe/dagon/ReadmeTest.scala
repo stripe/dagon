@@ -31,14 +31,14 @@ object Example {
     })
 
   object SimplifyNegation extends PartialRule[Eqn] {
-    def applyWhere[T](on: ExpressionDag[Eqn]) = {
+    def applyWhere[T](on: Dag[Eqn]) = {
       case Negate(Negate(e)) => e
       case Negate(Const(x)) => Const(-x)
     }
   }
 
   object SimplifyAddition extends PartialRule[Eqn] {
-    def applyWhere[T](on: ExpressionDag[Eqn]) = {
+    def applyWhere[T](on: Dag[Eqn]) = {
       case Add(Const(x), Const(y)) => Const(x + y)
       case Add(Add(e, Const(x)), Const(y)) => Add(e, Const(x + y))
       case Add(Add(Const(x), e), Const(y)) => Add(e, Const(x + y))
@@ -54,5 +54,5 @@ object Example {
   val b2 = a + Const(5) + Var("y")
   val c = b1 - b2
 
-  ExpressionDag.applyRule(c, toLiteral, rules)
+  Dag.applyRule(c, toLiteral, rules)
 }

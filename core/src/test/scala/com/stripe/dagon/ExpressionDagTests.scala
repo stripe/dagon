@@ -20,7 +20,7 @@ package com.stripe.dagon
 import org.scalacheck.Prop._
 import org.scalacheck.{Gen, Prop, Properties}
 
-object ExpressionDagTests extends Properties("ExpressionDag") {
+object DagTests extends Properties("Dag") {
 
   /*
    * Here we test with a simple algebra optimizer
@@ -60,7 +60,7 @@ object ExpressionDagTests extends Properties("ExpressionDag") {
   }
 
   def testRule[T](start: Formula[T], expected: Formula[T], rule: Rule[Formula]): Prop = {
-    val got = ExpressionDag.applyRule(start, toLiteral, rule)
+    val got = Dag.applyRule(start, toLiteral, rule)
     (got == expected) :| s"$got == $expected"
   }
 
@@ -107,14 +107,14 @@ object ExpressionDagTests extends Properties("ExpressionDag") {
    * Inc(Inc(a, b), c) = Inc(a, b + c)
    */
   object CombineInc extends Rule[Formula] {
-    def apply[T](on: ExpressionDag[Formula]) = {
+    def apply[T](on: Dag[Formula]) = {
       case Inc(i @ Inc(a, b), c) if on.fanOut(i) == 1 => Some(Inc(a, b + c))
       case _ => None
     }
   }
 
   object RemoveInc extends PartialRule[Formula] {
-    def applyWhere[T](on: ExpressionDag[Formula]) = {
+    def applyWhere[T](on: Dag[Formula]) = {
       case Inc(f, by) => Sum(f, Constant(by))
     }
   }
@@ -125,18 +125,18 @@ object ExpressionDagTests extends Properties("ExpressionDag") {
     toLiteral.apply(form).evaluate == form
   }
 
-  property("Going to ExpressionDag round trips") = forAll(genForm) { form =>
-    val (dag, id) = ExpressionDag(form, toLiteral)
+  property("Going to Dag round trips") = forAll(genForm) { form =>
+    val (dag, id) = Dag(form, toLiteral)
     dag.evaluate(id) == form
   }
 
   property("CombineInc does not change results") = forAll(genForm) { form =>
-    val simplified = ExpressionDag.applyRule(form, toLiteral, CombineInc)
+    val simplified = Dag.applyRule(form, toLiteral, CombineInc)
     form.evaluate == simplified.evaluate
   }
 
   property("RemoveInc removes all Inc") = forAll(genForm) { form =>
-    val noIncForm = ExpressionDag.applyRule(form, toLiteral, RemoveInc)
+    val noIncForm = Dag.applyRule(form, toLiteral, RemoveInc)
     def noInc(f: Formula[Int]): Boolean = f match {
       case Constant(_) => true
       case Inc(_, _) => false
@@ -156,7 +156,7 @@ object ExpressionDagTests extends Properties("ExpressionDag") {
   def genChain: Gen[Formula[Int]] = Gen.frequency((1, genConst), (3, genChainInc))
 
   property("CombineInc compresses linear Inc chains") = forAll(genChain) { chain =>
-    ExpressionDag.applyRule(chain, toLiteral, CombineInc) match {
+    Dag.applyRule(chain, toLiteral, CombineInc) match {
       case Constant(n) => true
       case Inc(Constant(n), b) => true
       case _ => false // All others should have been compressed
@@ -167,7 +167,7 @@ object ExpressionDagTests extends Properties("ExpressionDag") {
    * We should be able to totally evaluate these formulas
    */
   object EvaluationRule extends Rule[Formula] {
-    def apply[T](on: ExpressionDag[Formula]) = {
+    def apply[T](on: Dag[Formula]) = {
       case Sum(Constant(a), Constant(b)) => Some(Constant(a + b))
       case Product(Constant(a), Constant(b)) => Some(Constant(a * b))
       case Inc(Constant(a), b) => Some(Constant(a + b))
@@ -197,7 +197,7 @@ object ExpressionDagTests extends Properties("ExpressionDag") {
     val tails = (n1 :: ns).zipWithIndex.map { case (i, idx) => Formula(i).inc(idx) }
 
     val (dag, roots) =
-      tails.foldLeft((ExpressionDag.empty[Formula](toLiteral), Set.empty[Id[_]])) {
+      tails.foldLeft((Dag.empty[Formula](toLiteral), Set.empty[Id[_]])) {
         case ((d, s), f) =>
           val (dnext, id) = d.addRoot(f)
           (dnext, s + id)
