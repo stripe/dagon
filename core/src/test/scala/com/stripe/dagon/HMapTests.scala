@@ -18,7 +18,8 @@
 package com.stripe.dagon
 
 import org.scalacheck.Prop._
-import org.scalacheck.{Arbitrary, Gen, Properties}
+import org.scalacheck.{Arbitrary, Cogen, Gen, Properties}
+import Arbitrary.arbitrary
 
 /**
  * This tests the HMap. We use the type system to
@@ -26,65 +27,119 @@ import org.scalacheck.{Arbitrary, Gen, Properties}
  * in the problem of higher kinded Arbitraries.
  */
 object HMapTests extends Properties("HMap") {
+
   case class Key[T](key: Int)
+
+  object Key {
+    implicit def arbitraryKey[A]: Arbitrary[Key[A]] =
+      Arbitrary(arbitrary[Int].map(n => Key(n & 0xff)))
+    implicit def cogenKey[A]: Cogen[Key[A]] =
+      Cogen[Int].contramap(_.key)
+  }
+
   case class Value[T](value: Int)
 
-  implicit def keyGen: Gen[Key[Int]] = Gen.choose(Int.MinValue, Int.MaxValue).map(Key(_))
-  implicit def valGen: Gen[Value[Int]] = Gen.choose(Int.MinValue, Int.MaxValue).map(Value(_))
+  object Value {
+    implicit def arbitraryValue[A]: Arbitrary[Value[A]] =
+      Arbitrary(arbitrary[Int].map(n => Value(n & 0xff)))
+    implicit def cogenValue[A]: Cogen[Value[A]] =
+      Cogen[Int].contramap(_.value)
+  }
 
-  def zip[T, U](g: Gen[T], h: Gen[U]): Gen[(T, U)] =
-    for {
-      a <- g
-      b <- h
-    } yield (a, b)
+  type H = HMap[Key, Value]
+  type K = Key[Int]
+  type V = Value[Int]
 
-  implicit def hmapGen: Gen[HMap[Key, Value]] =
-    Gen.listOf(zip(keyGen, valGen)).map { list =>
-      list.foldLeft(HMap.empty[Key, Value]) { (hm, kv) =>
-        hm + kv
+  def fromPairs(kvs: Iterable[(K, V)]): H =
+    kvs.foldLeft(HMap.empty[Key, Value])(_ + _)
+
+  implicit val arbitraryHmap: Arbitrary[H] =
+    Arbitrary(Gen.listOf(for {
+      k <- arbitrary[K]
+      v <- arbitrary[V]
+    } yield (k, v)).map(fromPairs))
+
+  type FK = FunctionK[H#Pair, Lambda[x => Option[Value[x]]]]
+
+  implicit val arbitraryFunctionK: Arbitrary[FK] =
+    Arbitrary(arbitrary[(Int, Int) => Option[Int]].map { f =>
+      new FK {
+        def toFunction[T] = { case (Key(m), Value(n)) => f(m, n).map(Value(_)) }
       }
-    }
+    })
 
-  implicit def arb[T](implicit g: Gen[T]): Arbitrary[T] = Arbitrary(g)
-
-  property("adding a pair works") = forAll {
-    (hmap: HMap[Key, Value], k: Key[Int], v: Value[Int]) =>
-      val initContains = hmap.contains(k)
-      val added = hmap + (k -> v)
-      // Adding puts the item in, and does not change the initial
-      (added.get(k) == Some(v)) &&
-      (initContains == hmap.contains(k)) &&
-      (initContains == hmap.get(k).isDefined)
-  }
-  property("removing a key works") = forAll { (hmap: HMap[Key, Value], k: Key[Int]) =>
-    val initContains = hmap.get(k).isDefined
-    val next = hmap - k
-    // Adding puts the item in, and does not change the initial
-    (!next.contains(k)) &&
-    (initContains == hmap.contains(k)) &&
-    (next.get(k) == None)
+  property("equals works") = forAll { (m0: Map[K, V], m1: Map[K, V]) =>
+    (fromPairs(m0) == fromPairs(m1)) == (m0 == m1)
   }
 
-  property("keysOf works") = forAll { (hmap: HMap[Key, Value], k: Key[Int], v: Value[Int]) =>
-    val initKeys = hmap.keysOf(v)
-    val added = hmap + (k -> v)
-    val finalKeys = added.keysOf(v)
-    val sizeIsConsistent = (finalKeys -- initKeys).size match {
-      case 0 => hmap.contains(k) // initially present
-      case 1 => !hmap.contains(k) // initially absent
-      case _ => false // we can't change the count by more than 1.
-    }
-
-    sizeIsConsistent && added.contains(k)
+  property("hashCode/equals consistency") = forAll { (h0: H, h1: H) =>
+    if (h0 == h1) h0.hashCode == h1.hashCode else true
   }
 
-  property("optionMap works") = forAll { (map: Map[Key[Int], Value[Int]]) =>
-    val hm = map.foldLeft(HMap.empty[Key, Value])(_ + _)
-    val f = new FunctionK[HMap[Key, Value]#Pair, Lambda[x => Option[Value[x]]]] {
-      def toFunction[T] = { case (Key(k), Value(v)) => if (k > v) Some(Value(k * v)) else None }
+  property("contains/get consistency") = forAll { (h: H, k: K) =>
+    h.get(k).isDefined == h.contains(k)
+  }
+
+  property("+/updated consistency") = forAll { (h: H, k: K, v: V) =>
+    h.updated(k, v) == h + (k -> v)
+  }
+
+  property("adding a pair works") = forAll { (h0: H, k: K, v: V) =>
+    val h1 = h0.updated(k, v)
+    val expectedSize = if (h0.contains(k)) h0.size else h0.size + 1
+    (h1.get(k) == Some(v)) && (h1.size == expectedSize)
+  }
+
+  property("apply works") = forAll { (h: H, k: K) =>
+    scala.util.Try(h(k)).toOption == h.get(k)
+  }
+
+  property("size works") = forAll { (m: Map[K, V]) =>
+    fromPairs(m).size == m.size
+  }
+
+  property("removing a key works") = forAll { (h0: H, k: K) =>
+    val h1 = h0 - k
+    val expectedSize = if (h0.contains(k)) h0.size - 1 else h0.size
+    (h1.get(k) == None) && (h1.size == expectedSize)
+  }
+
+  property("keysOf works") = forAll { (h0: H, k: K, v: V) =>
+    val h1 = h0.updated(k, v)
+    val newKeys = h1.keysOf(v) -- h0.keysOf(v)
+
+    val sizeIsConsistent = newKeys.size match {
+      case 0 => h0.contains(k) // k was already set to v
+      case 1 => h0.get(k).forall(_ != v) // k was not set to v
+      case _ => false // this should not happen
     }
-    val collected = hm.optionMap(f).map { case Value(v) => v }.toSet
-    val mapCollected = map.flatMap(f(_)).map { case Value(v) => v }.toSet
-    collected == mapCollected
+
+    h1.contains(k) && sizeIsConsistent
+  }
+
+  property("optionMap works") = forAll { (m: Map[K, V], f: FK) =>
+    val h = fromPairs(m)
+    val got = h.optionMap(f).map { case Value(v) => v }.toSet
+    val expected = m.flatMap(f(_)).map { case Value(v) => v }.toSet
+    got == expected
+  }
+
+  property("keySet works") = forAll { (m: Map[K, V]) =>
+    m.keySet == fromPairs(m).keySet
+  }
+
+  property("filterKeys works") = forAll { (h: H, p0: K => Boolean) =>
+    val p = p0.asInstanceOf[Key[_] => Boolean]
+    val a = h.filterKeys(p)
+    h.keySet.forall { k => p(k) == a.contains(k) }
+  }
+
+  property("forallKeys works") = forAll { (h: H, p0: K => Boolean) =>
+    val p = p0.asInstanceOf[Key[_] => Boolean]
+    h.forallKeys(p) == h.keySet.forall(p)
+  }
+
+  property("HMap.from works") = forAll { (m: Map[K, V]) =>
+    HMap.from[Key, Value](m.asInstanceOf[Map[Key[_], Value[_]]]) == fromPairs(m)
   }
 }
