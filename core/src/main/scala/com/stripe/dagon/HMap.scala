@@ -83,6 +83,6 @@ object HMap {
   def empty[K[_], V[_]]: HMap[K, V] =
     from[K, V](Map.empty[K[_], V[_]])
 
-  def from[K[_], V[_]](m: Map[K[_], V[_]]): HMap[K, V] =
+  private[dagon] def from[K[_], V[_]](m: Map[K[_], V[_]]): HMap[K, V] =
     new HMap[K, V](m)
 }
