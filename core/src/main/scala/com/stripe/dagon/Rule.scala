@@ -15,9 +15,9 @@ trait Rule[N[_]] { self =>
   def apply[T](on: Dag[N]): N[T] => Option[N[T]]
 
   /**
-   * If the current rule cannot apply, then try the argument here
+   * If the current rule cannot apply, then try the argument here.
    * Note, this applies in series at a given node, not on the whole
-   * Dag after the first rule has run. For that, see Dag.applySeq
+   * Dag after the first rule has run. For that, see Dag.applySeq.
    */
   def orElse(that: Rule[N]): Rule[N] =
     new Rule[N] {
