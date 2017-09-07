@@ -126,6 +126,13 @@ sealed abstract class Dag[N[_]] { self =>
   }
 
   /**
+   * Apply a sequence of rules, which you may think of as phases, in order
+   * First apply one rule until it does not apply, then the next, etc..
+   */
+  def applySeq(phases: Seq[Rule[N]]): Dag[N] =
+    phases.foldLeft(this) { (dag, rule) => dag(rule) }
+
+  /**
    * apply the rule at the first place that satisfies
    * it, and return from there.
    */

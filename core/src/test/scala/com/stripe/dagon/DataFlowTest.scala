@@ -164,13 +164,15 @@ object DataFlowTest {
     /**
      * these are all optimization rules to simplify
      */
-    val allRules: Rule[Flow] =
-      composeOptionMapped
-        .orElse(composeConcatMap)
-        .orElse(mergePullDown)
-        .orElse(rightMerge)
-        .orElse(removeTag)
-        .orElse(evalSource)
+    val allRulesList: List[Rule[Flow]] =
+      List(composeOptionMapped,
+        composeConcatMap,
+        mergePullDown,
+        rightMerge,
+        removeTag,
+        evalSource)
+
+    val allRules = Rule.orElse(allRulesList)
 
     val ruleGen: Gen[Rule[Flow]] = {
       val allRules = List(composeOptionMapped, composeConcatMap, optionMapToConcatMap, mergePullDown, rightMerge, evalSource, removeTag)
@@ -326,9 +328,9 @@ class DataFlowTest extends FunSuite {
 
   test("we either totally evaluate or have Iterators with fanOut") {
 
-    def law(f: Flow[Int]) = {
+    def law(f: Flow[Int], ap: Dag[Flow] => Dag[Flow]) = {
       val (dag, id) = Dag(f, Flow.toLiteral)
-      val optDag = dag(Flow.allRules)
+      val optDag = ap(dag)
       val optF = optDag.evaluate(id)
 
       optF match {
@@ -347,7 +349,8 @@ class DataFlowTest extends FunSuite {
       }
     }
 
-    forAll(law _)
+    forAll(law(_: Flow[Int], { dag => dag(Flow.allRules) }))
+    forAll(law(_: Flow[Int], { dag => dag.applySeq(Flow.allRulesList) }))
   }
 
   test("addRoot adds roots") {
