@@ -142,4 +142,9 @@ object HMapTests extends Properties("HMap") {
   property("HMap.from works") = forAll { (m: Map[K, V]) =>
     HMap.from[Key, Value](m.asInstanceOf[Map[Key[_], Value[_]]]) == fromPairs(m)
   }
+
+  property("heterogenous equality is false") =
+    forAll { (h: H) =>
+      h != null && h != 33
+    }
 }

@@ -58,6 +58,8 @@ final class HMap[K[_], V[_]](protected val map: Map[K[_], V[_]]) {
   def contains[T](id: K[T]): Boolean =
     get(id).isDefined
 
+  def isEmpty: Boolean = map.isEmpty
+
   def size: Int = map.size
 
   def forallKeys(p: K[_] => Boolean): Boolean =
