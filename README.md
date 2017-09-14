@@ -29,12 +29,12 @@ your `build.sbt` file:
 ```scala
 // use this snippet for the JVM
 libraryDependencies ++= List(
-  "com.stripe" %% "dagon-core" % "0.0.1",
+  "com.stripe" %% "dagon-core" % "0.2.0",
   compilerPlugin("org.spire-math" %% "kind-projector" % "0.9.4"))
 
 // use this snippet for JS, or cross-building
 libraryDependencies ++= List(
-  "com.stripe" %%% "dagon-core" % "0.0.1",
+  "com.stripe" %%% "dagon-core" % "0.2.0",
   compilerPlugin("org.spire-math" %% "kind-projector" % "0.9.4"))
 ```
 
@@ -118,14 +118,14 @@ object Example {
     }
   }
   
+  val rules = SimplifyNegation.orElse(SimplifyAddition)
+
   // 4. apply rewrite rules to a particular AST value
 
-  val a: Eqn[Unit] = Var("x") + Const(1)
-  val b1 = a + Const(2)
-  val b2 = a + Const(5) + Var("y")
-  val c = b1 - b2
-
-  val rules = SimplifyNegation.orElse(SimplifyAddition)
+  val a:  Eqn[Unit] = Var("x") + Const(1)
+  val b1: Eqn[Unit] = a + Const(2)
+  val b2: Eqn[Unit] = a + Const(5) + Var("y")
+  val c:  Eqn[Unit] = b1 - b2
 
   val simplified: Eqn[Unit] =
     Dag.applyRule(c, toLiteral, rules)
