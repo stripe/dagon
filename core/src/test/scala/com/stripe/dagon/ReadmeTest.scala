@@ -4,6 +4,8 @@ object Example {
 
   import com.stripe.dagon._
 
+  // 1. set up an AST type
+
   sealed trait Eqn[T] {
     def unary_-(): Eqn[T] = Negate(this)
     def +(that: Eqn[T]): Eqn[T] = Add(this, that)
@@ -16,19 +18,26 @@ object Example {
   case class Add[T](lhs: Eqn[T], rhs: Eqn[T]) extends Eqn[T]
 
   object Eqn {
+    // these function constructors make the definition of
+    // toLiteral a lot nicer.
     def negate[T]: Eqn[T] => Eqn[T] = Negate(_)
     def add[T]: (Eqn[T], Eqn[T]) => Eqn[T] = Add(_, _)
   }
 
+  // 2. set up a transfromation from AST to Literal
+
   val toLiteral: FunctionK[Eqn, Literal[Eqn, ?]] =
-    Memoize.functionK[Eqn, Literal[Eqn, ?]](new Memoize.RecursiveK[Eqn, Literal[Eqn, ?]] {
-      def toFunction[T] = {
-        case (c @ Const(_), f) => Literal.Const(c)
-        case (v @ Var(_), f) => Literal.Const(v)
-        case (Negate(x), f) => Literal.Unary(f(x), Eqn.negate)
-        case (Add(x, y), f) => Literal.Binary(f(x), f(y), Eqn.add)
-      }
-    })
+    Memoize.functionK[Eqn, Literal[Eqn, ?]](
+      new Memoize.RecursiveK[Eqn, Literal[Eqn, ?]] {
+        def toFunction[T] = {
+          case (c @ Const(_), f) => Literal.Const(c)
+          case (v @ Var(_), f) => Literal.Const(v)
+          case (Negate(x), f) => Literal.Unary(f(x), Eqn.negate)
+          case (Add(x, y), f) => Literal.Binary(f(x), f(y), Eqn.add)
+        }
+      })
+
+  // 3. set up rewrite rules
 
   object SimplifyNegation extends PartialRule[Eqn] {
     def applyWhere[T](on: Dag[Eqn]) = {
@@ -49,10 +58,13 @@ object Example {
 
   val rules = SimplifyNegation.orElse(SimplifyAddition)
 
-  val a: Eqn[Unit] = Var("x") + Const(1)
-  val b1 = a + Const(2)
-  val b2 = a + Const(5) + Var("y")
-  val c = b1 - b2
+  // 4. apply rewrite rules to a particular AST value
 
-  Dag.applyRule(c, toLiteral, rules)
+  val a:  Eqn[Unit] = Var("x") + Const(1)
+  val b1: Eqn[Unit] = a + Const(2)
+  val b2: Eqn[Unit] = a + Const(5) + Var("y")
+  val c:  Eqn[Unit] = b1 - b2
+
+  val simplified: Eqn[Unit] =
+    Dag.applyRule(c, toLiteral, rules)
 }
