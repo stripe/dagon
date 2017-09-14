@@ -3,10 +3,7 @@ package com.stripe.dagon
 import org.scalacheck.Prop._
 import org.scalacheck.{Arbitrary, Cogen, Properties}
 
-import scala.reflect.runtime.universe._
-
-abstract class CacheTests[K: TypeTag: Cogen: Arbitrary, V: TypeTag: Arbitrary]
-    extends Properties(s"Cache[${typeTag[K].tpe}, ${typeTag[V].tpe}]") {
+abstract class CacheTests[K: Cogen: Arbitrary, V: Arbitrary](name: String) extends Properties(name) {
 
   def buildMap(c: Cache[K, V], ks: Iterable[K], f: K => V): Map[K, V] =
     ks.iterator.foldLeft(Map.empty[K, V]) {
@@ -47,4 +44,4 @@ abstract class CacheTests[K: TypeTag: Cogen: Arbitrary, V: TypeTag: Arbitrary]
     }
 }
 
-object CacheTestsSL extends CacheTests[String, Long]
+object CacheTestsSL extends CacheTests[String, Long]("CacheTests[String, Long]")

@@ -3,12 +3,10 @@ package com.stripe.dagon
 import org.scalacheck.Prop._
 import org.scalacheck.{Arbitrary, Cogen, Properties}
 
-import scala.reflect.runtime.universe._
-
-abstract class HCacheTests[K[_], V[_]](implicit
-  kt: TypeTag[K[Int]], ka: Arbitrary[K[Int]], kc: Cogen[K[Int]],
-  vt: TypeTag[V[Int]], va: Arbitrary[V[Int]])
-    extends Properties(s"HCache[${kt.tpe}, ${vt.tpe}]") {
+abstract class HCacheTests[K[_], V[_]](name: String)(implicit
+  ka: Arbitrary[K[Int]], kc: Cogen[K[Int]],
+  va: Arbitrary[V[Int]])
+    extends Properties(name) {
 
   def buildHMap(c: HCache[K, V], ks: Iterable[K[Int]], f: K[Int] => V[Int]): HMap[K, V] =
     ks.iterator.foldLeft(HMap.empty[K, V]) {
@@ -49,4 +47,4 @@ abstract class HCacheTests[K[_], V[_]](implicit
     }
 }
 
-object HCacheTestsLL extends HCacheTests[List, List]
+object HCacheTestsLL extends HCacheTests[List, List]("HCacheTests[List, List]")
