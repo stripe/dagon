@@ -93,7 +93,7 @@ lazy val dagonSettings = Seq(
 ) ++ mimaDefaultSettings
 
 def previousArtifact(proj: String) =
-  "com.stripe" %% s"dagon-$proj" % "0.1.0"
+  "com.stripe" %% s"dagon-$proj" % "0.2.0"
 
 lazy val commonJvmSettings = Seq(
   testOptions in Test += Tests.Argument(TestFrameworks.ScalaTest, "-oDF"))
@@ -139,7 +139,7 @@ lazy val core = crossProject
   .settings(name := "dagon-core")
   .settings(moduleName := "dagon-core")
   .settings(dagonSettings: _*)
-  //.settings(mimaPreviousArtifacts := Set(previousArtifact("core"))) TODO re-enable after 0.2.0 is published
+  .settings(mimaPreviousArtifacts := Set(previousArtifact("core")))
   .disablePlugins(JmhPlugin)
   .jsSettings(commonJsSettings: _*)
   .jsSettings(coverageEnabled := false)
