@@ -20,7 +20,7 @@ package com.stripe.dagon
 import org.scalacheck.Prop._
 import org.scalacheck.{Arbitrary, Gen, Properties}
 
-import Literal.{Binary, Const, Unary}
+import Literal.{Binary, Const, Unary, Variadic}
 
 object LiteralTests extends Properties("Literal") {
   case class Box[T](get: T)
@@ -32,6 +32,10 @@ object LiteralTests extends Properties("Literal") {
     case u @ Unary(prev, _) => if (acc(u)) acc else transitiveClosure(prev, acc + u)
     case b @ Binary(p1, p2, _) =>
       if (acc(b)) acc else transitiveClosure(p2, transitiveClosure(p1, acc + b))
+    case Variadic(Nil, _) => acc
+    case v@Variadic(ins, fn) =>
+      val newNodes = ins.filterNot(acc)
+      newNodes.foldLeft(acc + v) { (res, n) => transitiveClosure(n, res) }
   }
 
   def genBox: Gen[Box[Int]] = Gen.chooseNum(Int.MinValue, Int.MaxValue).map(Box(_))
@@ -53,6 +57,32 @@ object LiteralTests extends Properties("Literal") {
       right <- Gen.oneOf(genLiteral, genChooseFrom(transitiveClosure[Box](left)))
     } yield Binary(left, right, bfn)
 
+  def genVariadic: Gen[Literal[Box, Int]] = {
+    def append(cnt: Int, items: List[Literal[Box, Int]]): Gen[List[Literal[Box, Int]]] =
+      if (cnt > 0) {
+
+        val hGen: Gen[Literal[Box, Int]] =
+          if (items.nonEmpty) {
+            val inner = Gen.oneOf(items.flatMap(transitiveClosure[Box](_)))
+              .asInstanceOf[Gen[Literal[Box, Int]]]
+            Gen.frequency((4, Gen.lzy(genLiteral)), (1, inner))
+          } else Gen.lzy(genLiteral)
+
+        for {
+          head <- hGen
+          rest <- append(cnt - 1, head :: items)
+        } yield rest
+      }
+      else Gen.const(items)
+
+    for {
+      argc <- Gen.choose(0, 4)
+      args <- append(argc, Nil)
+      fn <- Arbitrary.arbitrary[List[Int] => Int]
+      bfn = { boxes: List[Box[Int]] => Box(fn(boxes.map { case Box(b) => b })) }
+    } yield Variadic(args, bfn)
+  }
+
   def genChooseFrom[N[_]](s: Set[Literal[N, _]]): Gen[Literal[N, Int]] =
     Gen.oneOf(s.toSeq.asInstanceOf[Seq[Literal[N, Int]]])
 
@@ -60,7 +90,7 @@ object LiteralTests extends Properties("Literal") {
    * Create dags. Don't use binary too much as it can create exponentially growing dags
    */
   def genLiteral: Gen[Literal[Box, Int]] =
-    Gen.frequency((3, genConst), (6, genUnary), (1, genBinary))
+    Gen.frequency((6, genConst), (12, genUnary), (2, genBinary), (1, genVariadic))
 
   //This evaluates by recursively walking the tree without memoization
   //as lit.evaluate should do
@@ -68,6 +98,7 @@ object LiteralTests extends Properties("Literal") {
     case Const(n) => n
     case Unary(in, fn) => fn(slowEvaluate(in))
     case Binary(a, b, fn) => fn(slowEvaluate(a), slowEvaluate(b))
+    case Variadic(ins, fn) => fn(ins.map(slowEvaluate(_)))
   }
 
   property("Literal.evaluate must match simple explanation") = forAll(genLiteral) {

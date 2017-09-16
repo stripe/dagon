@@ -58,6 +58,8 @@ object Expr {
   case class Binary[N[_], T1, T2, T3](arg1: Id[T1], arg2: Id[T2], fn: (N[T1], N[T2]) => N[T3])
       extends Expr[N, T3]
 
+  case class Variadic[N[_], T1, T2](args: List[Id[T1]], fn: List[N[T1]] => N[T2]) extends Expr[N, T2]
+
   /**
    * Evaluate the given expression with the given mapping of Id to Expr.
    */
@@ -78,6 +80,8 @@ object Expr {
           fn(rec(idToExp(id)))
         case (Binary(id1, id2, fn), rec) =>
           fn(rec(idToExp(id1)), rec(idToExp(id2)))
+        case (Variadic(args, fn), rec) =>
+          fn(args.map { id => rec(idToExp(id)) })
       }
     })
 }
