@@ -32,8 +32,7 @@ object LiteralTests extends Properties("Literal") {
     case u @ Unary(prev, _) => if (acc(u)) acc else transitiveClosure(prev, acc + u)
     case b @ Binary(p1, p2, _) =>
       if (acc(b)) acc else transitiveClosure(p2, transitiveClosure(p1, acc + b))
-    case Variadic(Nil, _) => acc
-    case v@Variadic(ins, fn) =>
+    case v @ Variadic(ins, fn) =>
       val newNodes = ins.filterNot(acc)
       newNodes.foldLeft(acc + v) { (res, n) => transitiveClosure(n, res) }
   }
