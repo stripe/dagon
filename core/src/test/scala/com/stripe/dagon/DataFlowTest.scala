@@ -35,6 +35,7 @@ object DataFlowTest {
         case ConcatMapped(f, _) => f :: Nil
         case Tagged(f, _) => f :: Nil
         case Merge(left, right) => left :: right :: Nil
+        case Merged(ins) => ins
       }
 
     def transitiveDeps(f: Flow[Any]): List[Flow[Any]] =
@@ -44,6 +45,7 @@ object DataFlowTest {
     case class OptionMapped[T, U](input: Flow[T], fn: T => Option[U]) extends Flow[U]
     case class ConcatMapped[T, U](input: Flow[T], fn: T => TraversableOnce[U]) extends Flow[U]
     case class Merge[T](left: Flow[T], right: Flow[T]) extends Flow[T]
+    case class Merged[T](inputs: List[Flow[T]]) extends Flow[T]
     case class Tagged[A, T](input: Flow[T], tag: A) extends Flow[T]
 
     def toLiteral: FunctionK[Flow, Literal[Flow, ?]] =
@@ -56,6 +58,7 @@ object DataFlowTest {
           case (c: ConcatMapped[s, T], rec) => Unary(rec[s](c.input), { f: Flow[s] => ConcatMapped(f, c.fn) })
           case (t: Tagged[a, s], rec) => Unary(rec[s](t.input), { f: Flow[s] => Tagged(f, t.tag) })
           case (m: Merge[s], rec) => Binary(rec(m.left), rec(m.right), { (l: Flow[s], r: Flow[s]) => Merge(l, r) })
+          case (m: Merged[s], rec) => Variadic(m.inputs.map(rec(_)), { fs: List[Flow[s]] => Merged(fs) })
         }
       })
 
@@ -130,10 +133,37 @@ object DataFlowTest {
     /**
      * right associate merges
      */
-    object rightMerge extends PartialRule[Flow] {
-      def applyWhere[T](on: Dag[Flow]) = {
-        case Merge(left@Merge(a, b), c) if on.fanOut(left) == 1 =>
-          Merge(a, Merge(b, c))
+    object CombineMerges extends Rule[Flow] {
+      def apply[T](on: Dag[Flow]) = {
+        @annotation.tailrec
+        def flatten(f: Flow[T], toCheck: List[Flow[T]], acc: List[Flow[T]]): List[Flow[T]] =
+          f match {
+            case m@Merge(a, b) if on.fanOut(m) == 1 =>
+              // on the inner merges, we only destroy them if they have no fanout
+              flatten(a, b :: toCheck, acc)
+            case noSplit =>
+              toCheck match {
+                case h :: tail => flatten(h, tail, noSplit :: acc)
+                case Nil => (noSplit :: acc).reverse
+            }
+          }
+
+        { node: Flow[T] =>
+
+          node match {
+            case Merge(a, b) =>
+              flatten(a, b :: Nil, Nil) match {
+                case a1 :: a2 :: Nil =>
+                  None // could not simplify
+                case many => Some(Merged(many))
+              }
+            case Merged(list@(h :: tail)) =>
+              val res = flatten(h, tail, Nil)
+              if (res != list) Some(Merged(res))
+              else None
+            case _ => None
+          }
+        }
       }
     }
 
@@ -152,6 +182,14 @@ object DataFlowTest {
           // we need to materialize the left
           val left = it1.toStream
           IteratorSource((left #::: left).iterator)
+        case Merged(Nil) => IteratorSource(Iterator.empty)
+        case Merged(single :: Nil) => single
+        case Merged((src1 @ IteratorSource(it1)) :: (src2 @ IteratorSource(it2)) :: tail) if it1 != it2 && on.fanOut(src1) == 1 && on.fanOut(src2) == 1 =>
+          Merged(IteratorSource(it1 ++ it2) :: tail)
+        case Merged((src1 @ IteratorSource(it1)) :: (src2 @ IteratorSource(it2)) :: tail) if it1 == it2 && on.fanOut(src1) == 1 && on.fanOut(src2) == 1 =>
+          // we need to materialize the left
+          val left = it1.toStream
+          Merged(IteratorSource((left #::: left).iterator) :: tail)
       }
     }
 
@@ -168,14 +206,14 @@ object DataFlowTest {
       List(composeOptionMapped,
         composeConcatMap,
         mergePullDown,
-        rightMerge,
+        CombineMerges,
         removeTag,
         evalSource)
 
     val allRules = Rule.orElse(allRulesList)
 
     val ruleGen: Gen[Rule[Flow]] = {
-      val allRules = List(composeOptionMapped, composeConcatMap, optionMapToConcatMap, mergePullDown, rightMerge, evalSource, removeTag)
+      val allRules = List(composeOptionMapped, composeConcatMap, optionMapToConcatMap, mergePullDown, CombineMerges, evalSource, removeTag)
       for {
         n <- Gen.choose(0, allRules.size)
         gen = if (n == 0) Gen.const(List(Rule.empty[Flow])) else Gen.pick(n, allRules)

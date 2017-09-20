@@ -104,6 +104,7 @@ sealed abstract class Dag[N[_]] { self =>
         case Expr.Var(id) => id :: Nil
         case Expr.Unary(id, _) => id :: Nil
         case Expr.Binary(id0, id1, _) => id0 :: id1 :: Nil
+        case Expr.Variadic(ids, _) => ids
       }
 
     Graphs.reflexiveTransitiveClosure(roots.toList)(neighbors _).toSet
@@ -203,6 +204,7 @@ sealed abstract class Dag[N[_]] { self =>
       case Right(Expr.Var(id)) => Left(id) :: Nil
       case Right(Expr.Unary(id, _)) => Left(id) :: Nil
       case Right(Expr.Binary(id0, id1, _)) => Left(id0) :: Left(id1) :: Nil
+      case Right(Expr.Variadic(ids, _)) => ids.map(Left(_))
       case Left(id) => idToExp.get(id).map(Right(_): Node).toList
     }
     val all = Graphs.reflexiveTransitiveClosure(roots.toList.map(Left(_): Node))(deps _)
@@ -308,6 +310,18 @@ sealed abstract class Dag[N[_]] { self =>
             val (exp1, id1) = ensure(evalLit(n1))
             val (exp2, id2) = exp1.ensure(evalLit(n2))
             exp2.addExp(node, Expr.Binary(id1, id2, fn))
+          case Literal.Variadic(args, fn) =>
+            val evalLit = Literal.evaluateMemo[N]
+            val init: Dag[N] = this
+            def go[A](args: List[Literal[N, A]]): (Dag[N], List[Id[A]]) = {
+              val (e, ids) = args.foldLeft((init, List.empty[Id[A]])) { case ((exp, ids), n) =>
+                val (nextExp, id) = exp.ensure(evalLit(n))
+                (nextExp, id :: ids)
+              }
+              (e, ids.reverse)
+            }
+            val (exp1, ids) = go(args)
+            exp1.addExp(node, Expr.Variadic(ids, fn))
         }
     }
 
@@ -372,6 +386,7 @@ sealed abstract class Dag[N[_]] { self =>
       case Expr.Var(id) => sys.error(s"logic error: Var($id)")
       case Expr.Unary(id, _) => evaluate(id) == node
       case Expr.Binary(id0, id1, _) => evaluate(id0) == node || evaluate(id1) == node
+      case Expr.Variadic(ids, _) => ids.exists(evaluate(_) == node)
     }
 
     // TODO, we can do a much better algorithm that builds this function

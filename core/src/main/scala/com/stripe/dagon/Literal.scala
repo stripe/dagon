@@ -16,8 +16,9 @@ object Literal {
 
   case class Binary[N[_], T1, T2, T3](arg1: Literal[N, T1],
                                       arg2: Literal[N, T2],
-                                      fn: (N[T1], N[T2]) => N[T3])
-      extends Literal[N, T3]
+                                      fn: (N[T1], N[T2]) => N[T3]) extends Literal[N, T3]
+
+  case class Variadic[N[_], T1, T2](args: List[Literal[N, T1]], fn: List[N[T1]] => N[T2]) extends Literal[N, T2]
 
   /**
    * This evaluates a literal formula back to what it represents
@@ -38,6 +39,7 @@ object Literal {
         case (Const(n), _) => n
         case (Unary(n, fn), rec) => fn(rec(n))
         case (Binary(n1, n2, fn), rec) => fn(rec(n1), rec(n2))
+        case (Variadic(args, fn), rec) => fn(args.map(rec(_)))
       }
     })
 }
