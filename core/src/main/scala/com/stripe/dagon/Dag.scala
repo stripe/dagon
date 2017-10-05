@@ -407,6 +407,24 @@ sealed abstract class Dag[N[_]] { self =>
     find(node).isDefined
 
   /**
+   * What nodes do we depend directly on
+   */
+  def dependenciesOf(node: N[_]): List[N[_]] = {
+    toLiteral(node) match {
+      case Literal.Const(_) =>
+        Nil
+      case Literal.Unary(n, _) =>
+        n.evaluate :: Nil
+      case Literal.Binary(n1, n2, _) =>
+        val evalLit = Literal.evaluateMemo[N]
+        evalLit(n1) :: evalLit(n2) :: Nil
+      case Literal.Variadic(inputs, _) =>
+        val evalLit = Literal.evaluateMemo[N]
+        inputs.map(evalLit(_))
+    }
+  }
+
+  /**
    * list all the nodes that depend on the given node
    */
   def dependentsOf(node: N[_]): Set[N[_]] = {
@@ -433,12 +451,28 @@ sealed abstract class Dag[N[_]] { self =>
   }
 
   /**
-   * Return all dependendants of a given node.
+   * equivalent to (but maybe faster than) fanOut(n) <= 1
+   */
+  def hasSingleDependent(n: N[_]): Boolean =
+    fanOut(n) <= 1
+
+  /**
+   * Return all dependents of a given node.
    * Does not include itself
    */
   def transitiveDependentsOf(p: N[_]): Set[N[_]] = {
     def nfn(n: N[Any]): List[N[Any]] =
       dependentsOf(n).toList.asInstanceOf[List[N[Any]]]
+
+    Graphs.depthFirstOf(p.asInstanceOf[N[Any]])(nfn _).toSet
+  }
+
+  /**
+   * Return the transitive dependencies of a given node
+   */
+  def transitiveDependenciesOf(p: N[_]): Set[N[_]] = {
+    def nfn(n: N[Any]): List[N[Any]] =
+      dependenciesOf(n).toList.asInstanceOf[List[N[Any]]]
 
     Graphs.depthFirstOf(p.asInstanceOf[N[Any]])(nfn _).toSet
   }
