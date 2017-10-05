@@ -451,10 +451,10 @@ sealed abstract class Dag[N[_]] { self =>
   }
 
   /**
-   * equivalent to (but maybe faster than) fanOut(n) > 1
+   * equivalent to (but maybe faster than) fanOut(n) <= 1
    */
   def hasSingleDependent(n: N[_]): Boolean =
-    fanOut(n) > 1
+    fanOut(n) <= 1
 
   /**
    * Return all dependents of a given node.

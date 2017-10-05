@@ -517,8 +517,15 @@ class DataFlowTest extends FunSuite {
       val (dag, id) = Dag(f, Flow.toLiteral)
 
       dag.allNodes.foreach { n =>
-        assert(dag.hasSingleDependent(n) == (dag.fanOut(n) > 1))
+        assert(dag.hasSingleDependent(n) == (dag.fanOut(n) <= 1))
       }
+
+      dag
+        .allNodes
+        .filter(dag.hasSingleDependent)
+        .foreach { n =>
+          assert(dag.dependentsOf(n).size <= 1)
+        }
     }
   }
 
