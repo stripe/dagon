@@ -429,6 +429,17 @@ class DataFlowTest extends FunSuite {
     }
   }
 
+  test("transitiveDependenciesOf matches Flow.transitiveDeps") {
+    forAll { (f: Flow[Int], rule: Rule[Flow], max: Int) =>
+      val (dag, id) = Dag(f, Flow.toLiteral)
+
+      val optimizedDag = dag.applyMax(rule, max)
+
+      val optF = optimizedDag.evaluate(id)
+      assert(optimizedDag.transitiveDependenciesOf(optF) == (Flow.transitiveDeps(optF).toSet - optF), s"optimized: $optF $optimizedDag")
+    }
+  }
+
   test("Dag: findAll(n).forall(evaluate(_) == n)") {
     forAll { (f: Flow[Int], rule: Rule[Flow], max: Int) =>
       val (dag, id) = Dag(f, Flow.toLiteral)
@@ -479,6 +490,34 @@ class DataFlowTest extends FunSuite {
         assert(optimizedDag.dependentsOf(n) == depGraph.dependantsOf(n).fold(Set.empty[Flow[Any]])(_.toSet))
         assert(optimizedDag.transitiveDependentsOf(n) ==
           depGraph.transitiveDependantsOf(n).toSet)
+      }
+    }
+  }
+
+  test("dependenciesOf matches toLiteral") {
+    forAll { (f: Flow[Int]) =>
+      val (dag, id) = Dag(f, Flow.toLiteral)
+
+      def contract(n: Flow[_]): List[Flow[_]] =
+        Flow.toLiteral(n) match {
+          case Literal.Const(_) => Nil
+          case Literal.Unary(n, _) => n.evaluate :: Nil
+          case Literal.Binary(n1, n2, _) => n1.evaluate :: n2.evaluate :: Nil
+          case Literal.Variadic(ns, _) => ns.map(_.evaluate)
+        }
+
+      dag.allNodes.foreach { n =>
+        assert(dag.dependenciesOf(n) == contract(n))
+      }
+    }
+  }
+
+  test("hasSingleDependent matches fanOut") {
+    forAll { (f: Flow[Int]) =>
+      val (dag, id) = Dag(f, Flow.toLiteral)
+
+      dag.allNodes.foreach { n =>
+        assert(dag.hasSingleDependent(n) == (dag.fanOut(n) > 1))
       }
     }
   }
