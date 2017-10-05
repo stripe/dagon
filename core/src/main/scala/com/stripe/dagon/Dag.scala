@@ -76,7 +76,17 @@ sealed abstract class Dag[N[_]] { self =>
   private def gc: Dag[N] = {
     val keepers = reachableIds
     if (idToExp.forallKeys(keepers)) this
-    else copy(id2Exp = idToExp.filterKeys(keepers))
+    else {
+      val id2Exp = idToExp.filterKeys(keepers)
+      // if we have GC'd an id it is because
+      // it did not escape. I.e. it is not a root,
+      // nor reachable from the root, so we can
+      // possibly lower the nextId, which is a bit
+      // nice because (unfortunately) Ids wrap Int
+      // not Long, so overflow is possible
+      val nextId = id2Exp.keySet.iterator.map(_.id).max
+      copy(id2Exp = id2Exp, id = nextId + 1)
+    }
   }
 
   /**
@@ -151,13 +161,32 @@ sealed abstract class Dag[N[_]] { self =>
             .apply[U](self)(n1)
             .filter(_ != n1)
             .map { n2 =>
-              val (dag, newId) = ensure(n2)
+              // A node can have several Ids.
+              // we need to point ALL of the old ids to the new one
+              val oldIds =
+                findAll(n1) match {
+                  case absent if absent.isEmpty =>
+                    sys.error(s"unreachable code, $n1 should have id $id")
+                  case existing => existing
+                }
+              // Get an ID for the new node
+              // if this new node points to the old node
+              // we are going to create a cycle, since
+              // below we point the old nodes back to the
+              // new id. To fix this, re-reassign
+              // n1 to a new id, since that new id won't be
+              // updated to point to itself, we prevent a loop
+              val dag1 = copy(id2Exp = idToExp.updated(Id(nextId), expr), id = nextId + 1)
+              val (dag2, newId) = dag1.ensure(n2)
 
               // We can't delete Ids which may have been shared
               // publicly, and the ids may be embedded in many
-              // nodes. Instead we remap 'id' to be a pointer
+              // nodes. Instead we remap 'ids' to be a pointer
               // to 'newid'.
-              dag.copy(id2Exp = dag.idToExp.updated(id, Expr.Var[N, U](newId))).gc
+              val newIdToExp = oldIds.foldLeft(dag2.idToExp) { (mapping, origId) =>
+                mapping.updated(origId, Expr.Var[N, U](newId))
+              }
+              dag2.copy(id2Exp = newIdToExp).gc
             }
         }
       }
@@ -240,10 +269,11 @@ sealed abstract class Dag[N[_]] { self =>
             // and now, Id(0) and Id(2) both point to non-Var nodes, but also
             // both are equal
 
-            // Prefer to return a root Id, if there is one
-            val matchingRoots = nonEmpty.filter(roots)
-            if (matchingRoots.isEmpty) Some(nonEmpty.min)
-            else Some(matchingRoots.min)
+            // We use the maximum ID which is important to deal with
+            // cycle avoidance in applyRule since we guarantee
+            // that all the nodes that are repointed are computed
+            // before we add a new node to graph
+            Some(nonEmpty.max)
         }
       }
     )

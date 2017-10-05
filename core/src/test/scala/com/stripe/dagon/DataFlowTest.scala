@@ -34,6 +34,7 @@ object DataFlowTest {
         case OptionMapped(f, _) => f :: Nil
         case ConcatMapped(f, _) => f :: Nil
         case Tagged(f, _) => f :: Nil
+        case Fork(f) => f :: Nil
         case Merge(left, right) => left :: right :: Nil
         case Merged(ins) => ins
       }
@@ -47,6 +48,7 @@ object DataFlowTest {
     case class Merge[T](left: Flow[T], right: Flow[T]) extends Flow[T]
     case class Merged[T](inputs: List[Flow[T]]) extends Flow[T]
     case class Tagged[A, T](input: Flow[T], tag: A) extends Flow[T]
+    case class Fork[T](input: Flow[T]) extends Flow[T]
 
     def toLiteral: FunctionK[Flow, Literal[Flow, ?]] =
       Memoize.functionK[Flow, Literal[Flow, ?]](new Memoize.RecursiveK[Flow, Literal[Flow, ?]] {
@@ -57,6 +59,7 @@ object DataFlowTest {
           case (o: OptionMapped[s, T], rec) => Unary(rec[s](o.input), { f: Flow[s] => OptionMapped(f, o.fn) })
           case (c: ConcatMapped[s, T], rec) => Unary(rec[s](c.input), { f: Flow[s] => ConcatMapped(f, c.fn) })
           case (t: Tagged[a, s], rec) => Unary(rec[s](t.input), { f: Flow[s] => Tagged(f, t.tag) })
+          case (f: Fork[s], rec) => Unary(rec[s](f.input), { f: Flow[s] => Fork(f) })
           case (m: Merge[s], rec) => Binary(rec(m.left), rec(m.right), { (l: Flow[s], r: Flow[s]) => Merge(l, r) })
           case (m: Merged[s], rec) => Variadic(m.inputs.map(rec(_)), { fs: List[Flow[s]] => Merged(fs) })
         }
@@ -86,6 +89,18 @@ object DataFlowTest {
       }
     }
 
+    /**
+     * Add explicit fork
+     * this is useful if you don't want to have to check each rule for
+     * fanout
+     */
+    object explicitFork extends Rule[Flow] {
+      def apply[T](on: Dag[Flow]) = {
+        case Fork(_) => None
+        case flow if on.fanOut(flow) > 1 => Some(Fork(flow))
+        case _ => None
+      }
+    }
     /**
      * f.optionMap(fn1).optionMap(fn2) == f.optionMap { t => fn1(t).flatMap(fn2) }
      * we use object to get good toString for debugging
@@ -518,5 +533,25 @@ class DataFlowTest extends FunSuite {
 
       assert(optimizedDag.reachableIds.map(optimizedDag.evaluate(_)) == optimizedDag.allNodes, s"$optimizedDag")
     }
+  }
+
+  test("adding explicit forks does not loop") {
+    forAll { (f: Flow[Int]) =>
+      Dag.applyRule(f, Flow.toLiteral, Flow.explicitFork)
+      // we are just testing that this does not throw
+    }
+
+    // Here are some explicit examples:
+    import Flow._
+    val src = IteratorSource(Iterator(1))
+    val example = ConcatMapped(Tagged(Merge(OptionMapped(src, { x: Int => Option(2 * x) }),src),0), { x: Int => List(x) })
+    Dag.applyRule(example, Flow.toLiteral, Flow.explicitFork)
+
+    // Here is an example where we have a root that has fanOut
+    val d0 = Dag.empty(Flow.toLiteral)
+    val (d1, id0) = d0.addRoot(src)
+    val (d2, id1) = d1.addRoot(example)
+
+    d2.apply(Flow.explicitFork)
   }
 }
