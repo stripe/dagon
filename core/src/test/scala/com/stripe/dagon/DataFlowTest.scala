@@ -600,4 +600,27 @@ class DataFlowTest extends FunSuite {
 
     d2.apply(Flow.explicitFork)
   }
+
+  test("a particular hard case for explicit forks") {
+    //
+    // Here we have an implicit fork just before an explicit
+    // fork, but then try to add explicit forks. This should
+    // move the implicit fork down to the explicit fork.
+    import Flow._
+    val src = IteratorSource(Iterator(1, 2, 3))
+    val fn1: Int => Option[Int] = { x => Option(x + 1) }
+    val f1 = OptionMapped(src, fn1)
+    val f2 = Fork(src)
+    val f3 = OptionMapped(f2, { x: Int => Option(x + 2) })
+    val f4 = OptionMapped(f2, { x: Int => Option(x + 3) })
+
+    // Here is an example where we have a root that has fanOut
+    val d0 = Dag.empty(Flow.toLiteral)
+    val (d1, id1) = d0.addRoot(f1)
+    val (d2, id3) = d1.addRoot(f3)
+    val (d3, id4) = d2.addRoot(f4)
+
+    val d4 = d3.apply(Flow.explicitFork)
+    assert(d4.evaluate(id1) == OptionMapped(Fork(src), fn1))
+  }
 }
