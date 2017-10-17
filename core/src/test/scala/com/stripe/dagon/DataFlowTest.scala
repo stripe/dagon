@@ -93,12 +93,34 @@ object DataFlowTest {
      * Add explicit fork
      * this is useful if you don't want to have to check each rule for
      * fanout
+     *
+     * This rule has to be applied from lower down on the graph
+     * looking up to avoid cases where Fork(f) exists and f
+     * has a fanOut.
      */
     object explicitFork extends Rule[Flow] {
+      def needsFork[N[_]](on: Dag[N], n: N[_]): Boolean =
+        n match {
+          case Fork(_) => false
+          case n => !on.hasSingleDependent(n)
+        }
       def apply[T](on: Dag[Flow]) = {
-        case Fork(_) => None
-        case flow if on.fanOut(flow) > 1 => Some(Fork(flow))
-        case _ => None
+        case OptionMapped(flow, fn) if needsFork(on, flow) =>
+          Some(OptionMapped(Fork(flow), fn))
+        case ConcatMapped(flow, fn) if needsFork(on, flow) =>
+          Some(ConcatMapped(Fork(flow), fn))
+        case Tagged(flow, tag) if needsFork(on, flow) =>
+          Some(Tagged(Fork(flow), tag))
+        case Merge(lhs, rhs) =>
+          val (nl, nr) = (needsFork(on, lhs), needsFork(on, lhs))
+          if (!nl && !nr) None
+          else Some(Merge(if (nl) Fork(lhs) else lhs, if (nr) Fork(rhs) else rhs))
+        case Merged(inputs) =>
+          val nx = inputs.map(needsFork(on, _))
+          if (nx.forall(_ == false)) None
+          else Some(Merged(inputs.zip(nx).map { case (n, b) => if (b) Fork(n) else n }))
+        case _ =>
+          None
       }
     }
     /**
