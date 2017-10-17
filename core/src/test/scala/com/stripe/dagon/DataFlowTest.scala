@@ -93,12 +93,34 @@ object DataFlowTest {
      * Add explicit fork
      * this is useful if you don't want to have to check each rule for
      * fanout
+     *
+     * This rule has to be applied from lower down on the graph
+     * looking up to avoid cases where Fork(f) exists and f
+     * has a fanOut.
      */
     object explicitFork extends Rule[Flow] {
+      def needsFork[N[_]](on: Dag[N], n: N[_]): Boolean =
+        n match {
+          case Fork(_) => false
+          case n => !on.hasSingleDependent(n)
+        }
       def apply[T](on: Dag[Flow]) = {
-        case Fork(_) => None
-        case flow if on.fanOut(flow) > 1 => Some(Fork(flow))
-        case _ => None
+        case OptionMapped(flow, fn) if needsFork(on, flow) =>
+          Some(OptionMapped(Fork(flow), fn))
+        case ConcatMapped(flow, fn) if needsFork(on, flow) =>
+          Some(ConcatMapped(Fork(flow), fn))
+        case Tagged(flow, tag) if needsFork(on, flow) =>
+          Some(Tagged(Fork(flow), tag))
+        case Merge(lhs, rhs) =>
+          val (nl, nr) = (needsFork(on, lhs), needsFork(on, lhs))
+          if (!nl && !nr) None
+          else Some(Merge(if (nl) Fork(lhs) else lhs, if (nr) Fork(rhs) else rhs))
+        case Merged(inputs) =>
+          val nx = inputs.map(needsFork(on, _))
+          if (nx.forall(_ == false)) None
+          else Some(Merged(inputs.zip(nx).map { case (n, b) => if (b) Fork(n) else n }))
+        case _ =>
+          None
       }
     }
     /**
@@ -599,5 +621,28 @@ class DataFlowTest extends FunSuite {
     val (d2, id1) = d1.addRoot(example)
 
     d2.apply(Flow.explicitFork)
+  }
+
+  test("a particular hard case for explicit forks") {
+    //
+    // Here we have an implicit fork just before an explicit
+    // fork, but then try to add explicit forks. This should
+    // move the implicit fork down to the explicit fork.
+    import Flow._
+    val src = IteratorSource(Iterator(1, 2, 3))
+    val fn1: Int => Option[Int] = { x => Option(x + 1) }
+    val f1 = OptionMapped(src, fn1)
+    val f2 = Fork(src)
+    val f3 = OptionMapped(f2, { x: Int => Option(x + 2) })
+    val f4 = OptionMapped(f2, { x: Int => Option(x + 3) })
+
+    // Here is an example where we have a root that has fanOut
+    val d0 = Dag.empty(Flow.toLiteral)
+    val (d1, id1) = d0.addRoot(f1)
+    val (d2, id3) = d1.addRoot(f3)
+    val (d3, id4) = d2.addRoot(f4)
+
+    val d4 = d3.apply(Flow.explicitFork)
+    assert(d4.evaluate(id1) == OptionMapped(Fork(src), fn1))
   }
 }

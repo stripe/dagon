@@ -169,6 +169,11 @@ sealed abstract class Dag[N[_]] { self =>
                     sys.error(s"unreachable code, $n1 should have id $id")
                   case existing => existing
                 }
+              // If n2 depends on n1, the Var trick fails and introduces
+              // loops. To avoid this, we have to work in an edge based
+              // approach. For all n3 != n2, if they depend on n1, replace
+              // with n2. Leave n2 alone.
+
               // Get an ID for the new node
               // if this new node points to the old node
               // we are going to create a cycle, since
