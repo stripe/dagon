@@ -11,3 +11,10 @@ trait FunctionK[T[_], R[_]] {
 
   def toFunction[U]: T[U] => R[U]
 }
+
+object FunctionK {
+  def andThen[A[_], B[_], C[_]](first: FunctionK[A, B], second: FunctionK[B, C]): FunctionK[A, C] =
+    new FunctionK[A, C] {
+      def toFunction[U] = first.toFunction[U].andThen(second.toFunction[U])
+    }
+}
