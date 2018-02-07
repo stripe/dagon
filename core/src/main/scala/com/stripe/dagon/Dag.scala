@@ -48,13 +48,16 @@ sealed abstract class Dag[N[_]] { self =>
    */
   def toLiteral: FunctionK[N, Literal[N, ?]]
 
-  // Caches polymorphic functions of type T => Option[N[T]]
+  // Caches polymorphic functions of type Id[T] => Option[N[T]]
   private val idToN: HCache[Id, Lambda[t => Option[N[t]]]] =
     HCache.empty[Id, Lambda[t => Option[N[t]]]]
 
-  // Caches polymorphic functions of type N[T] => Option[T]
+  // Caches polymorphic functions of type N[T] => Option[Id[T]]
   private val nodeToId: HCache[N, Lambda[t => Option[Id[t]]]] =
     HCache.empty[N, Lambda[t => Option[Id[t]]]]
+
+  // Caches polymorphic functions of type Expr[N, T] => N[T]
+  private val evalMemo = Expr.evaluateMemo(idToExp)
 
   // Convenient method to produce new, modified DAGs based on this
   // one.
@@ -100,7 +103,7 @@ sealed abstract class Dag[N[_]] { self =>
    */
   def addRoot[T](node: N[T]): (Dag[N], Id[T]) = {
     val (dag, id) = ensure(node)
-    (dag.copy(gcroots = roots + id), id)
+    (dag.copy(gcroots = dag.roots + id), id)
   }
 
   /**
@@ -243,7 +246,6 @@ sealed abstract class Dag[N[_]] { self =>
     }
     val all = Graphs.reflexiveTransitiveClosure(roots.toList.map(Left(_): Node))(deps _)
 
-    val evalMemo = Expr.evaluateMemo(idToExp)
     all.iterator.collect { case Right(expr) => evalMemo(expr) }.toSet
   }
 
@@ -287,17 +289,11 @@ sealed abstract class Dag[N[_]] { self =>
    * Nodes can have multiple ids in the graph, this gives all of them
    */
   def findAll[T](node: N[T]): Stream[Id[T]] = {
-    /*
-     * This method looks through linearly evaluating nodes
-     * until we find the given node. Keep a cache of
-     * Expr -> N open for the entire call
-     */
-    val evalExpr = Expr.evaluateMemo(idToExp)
 
     val f = new FunctionK[HMap[Id, Expr[N, ?]]#Pair, Lambda[x => Option[Id[x]]]] {
       def toFunction[T1] = {
         case (thisId, expr) =>
-          if (node == evalExpr(expr)) Some(thisId) else None
+          if (node == evalMemo(expr)) Some(thisId) else None
       }
     }
 
@@ -341,6 +337,7 @@ sealed abstract class Dag[N[_]] { self =>
             exp1.addExp(node, Expr.Unary(idprev, fn))
           case Literal.Binary(n1, n2, fn) =>
             // use a common memoized function on both branches
+            // this is safe because Literal does not know about Id
             val evalLit = Literal.evaluateMemo[N]
             val (exp1, id1) = ensure(evalLit(n1))
             val (exp2, id2) = exp1.ensure(evalLit(n2))
@@ -374,7 +371,7 @@ sealed abstract class Dag[N[_]] { self =>
 
   def evaluateOption[T](id: Id[T]): Option[N[T]] =
     idToN.getOrElseUpdate(id, {
-      idToExp.get(id).map(_.evaluate(idToExp))
+      idToExp.get(id).map(evalMemo(_))
     })
 
   /**
@@ -484,7 +481,6 @@ sealed abstract class Dag[N[_]] { self =>
 }
 
 object Dag {
-
   def empty[N[_]](n2l: FunctionK[N, Literal[N, ?]]): Dag[N] =
     new Dag[N] {
       val idToExp = HMap.empty[Id, Expr[N, ?]]

@@ -37,7 +37,7 @@ object LiteralTests extends Properties("Literal") {
       newNodes.foldLeft(acc + v) { (res, n) => transitiveClosure(n, res) }
   }
 
-  def genBox: Gen[Box[Int]] = Gen.chooseNum(Int.MinValue, Int.MaxValue).map(Box(_))
+  def genBox: Gen[Box[Int]] = Gen.chooseNum(0, 10).map(Box(_))
 
   def genConst: Gen[Literal[Box, Int]] = genBox.map(Const(_))
   def genUnary: Gen[Literal[Box, Int]] =
@@ -47,9 +47,10 @@ object LiteralTests extends Properties("Literal") {
       input <- genLiteral
     } yield Unary(input, bfn)
 
+  def mk(fn: (Int, Int) => Int) = fn
   def genBinary: Gen[Literal[Box, Int]] =
     for {
-      fn <- Arbitrary.arbitrary[(Int, Int) => (Int)]
+      fn <- Gen.oneOf[(Int, Int) => (Int)]( mk(_ * _), mk(_ + _))
       bfn = { case (Box(l), Box(r)) => Box(fn(l, r)) }: (Box[Int], Box[Int]) => Box[Int]
       left <- genLiteral
       // We have to make dags, so select from the closure of left sometimes
@@ -104,4 +105,42 @@ object LiteralTests extends Properties("Literal") {
     (l: Literal[Box, Int]) =>
       l.evaluate == slowEvaluate(l)
   }
+
+  property("equality is transitive") =
+    forAll(genLiteral, genLiteral, genLiteral) { (a, b, c) =>
+      if (a == b) {
+        if (b == c) (a == c) else true
+      }
+      else if (b == c) {
+        (a != c) // otherwise, a == b
+      }
+      else true
+    }
+
+  property("binary equality regression check") =
+    forAll(genLiteral, genLiteral) { (a, b) =>
+      if (a != b) {
+        val fn: (Box[Int], Box[Int]) => Box[Int] = null
+        Binary(a, b, fn) != Binary(a, a, fn)
+      }
+      else true
+    }
+
+  property("reflexive equality") =
+    forAll(genLiteral, genLiteral) { (a, b) => (a == b) == (b == a) }
+
+  property("equality spec") =
+    forAll(genLiteral, genLiteral) { (a, b) =>
+      (a, b) match {
+        case (Const(ca), Const(cb)) =>
+          ((a == b) == (ca == cb))
+        case (Unary(ua, fa), Unary(ub, fb)) =>
+          ((a == b) == ((ua == ub) && (fa == fb)))
+        case (Binary(aa, ab, fa), Binary(ba, bb, fb)) =>
+          ((a == b) == ((aa == ba) && (ab == bb) && (fa == fb)))
+        case (Variadic(as, fa), Variadic(bs, fb)) =>
+          ((a == b) == ((as == bs) && (fa == fb)))
+        case (_, _) => a != b
+      }
+    }
 }

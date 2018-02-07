@@ -320,8 +320,8 @@ object DataFlowTest {
 class DataFlowTest extends FunSuite {
 
   implicit val generatorDrivenConfig =
-    PropertyCheckConfiguration(minSuccessful = 1000)
-    //PropertyCheckConfiguration(minSuccessful = 100)
+   PropertyCheckConfiguration(minSuccessful = 1000)
+   // PropertyCheckConfiguration(minSuccessful = 10)
 
   import DataFlowTest._
 
@@ -429,14 +429,40 @@ class DataFlowTest extends FunSuite {
   }
 
   test("addRoot adds roots") {
-    implicit val dag = Flow.arbExpDag[Int]
 
-    forAll { (d: Dag[Flow], f: Flow[Int]) =>
-
+    def law[T](d: Dag[Flow], f: Flow[T], p: Boolean) = {
       val (next, id) = d.addRoot(f)
+      if (p) {
+        println((next, id))
+        println(next.evaluate(id))
+        println(next.evaluate(id) == f)
+        println(next.idOf(f))
+      }
       assert(next.isRoot(f))
       assert(next.evaluate(id) == f)
       assert(next.evaluate(next.idOf(f)) == f)
+    }
+
+    {
+      import Flow._
+      val (dag, id0) = Dag(IteratorSource(Iterator.empty), toLiteral)
+      val iter0 = IteratorSource(Iterator(0))
+      val merged0 = Merge(iter0,iter0)
+      val tagged0 = Tagged(merged0,638667334)
+      val merged1 = Merge(iter0, Merge(tagged0, merged0))
+      val merged2 = Merge(iter0, merged1)
+      assert(merged0 != merged2)
+      val tagged1 = Tagged(ConcatMapped(merged2, { i: Int => List(i) }), -2147483648)
+      val optMapped0 = OptionMapped(tagged1, { i: Int => Some(i) })
+      val flow = Merge(tagged0, optMapped0)
+
+      law(dag, flow, false)
+      assert(flow != null)
+    }
+
+    implicit val dagArb = Flow.arbExpDag[Int]
+    forAll { (d: Dag[Flow], f: Flow[Int]) =>
+      law(d, f, false)
     }
   }
 
