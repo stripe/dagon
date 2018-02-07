@@ -53,7 +53,7 @@ object Literal {
         case thatAR: AnyRef if thatAR eq this => true
         case Binary(thatA1, thatA2, thatfn) =>
           // check the function first, before recursing on the literal
-          (thatfn == fn) && (arg1 == thatA1) && (arg1 == thatA2)
+          (thatfn == fn) && (arg1 == thatA1) && (arg2 == thatA2)
         case _ => false
       }
   }
