@@ -331,6 +331,17 @@ sealed abstract class Dag[N[_]] { self =>
     }
 
   /**
+   * This is only called by ensure
+   *
+   * Note, Expr must never be a Var
+   */
+  private def addExp[T](node: N[T], exp: Expr[N, T]): (Dag[N], Id[T]) = {
+    require(!exp.isVar)
+    val nodeId = Id[T](nextId)
+    (copy(id2Exp = idToExp.updated(nodeId, exp), id = nextId + 1), nodeId)
+  }
+
+  /**
    * ensure the given literal node is present in the Dag
    * Note: it is important that at each moment, each node has
    * at most one id in the graph. Put another way, for all
