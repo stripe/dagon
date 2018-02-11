@@ -33,6 +33,11 @@ object DagTests extends Properties("Dag") {
     def inc(n: Int): Formula[T] = Inc(this, n)
     def +(that: Formula[T]): Formula[T] = Sum(this, that)
     def *(that: Formula[T]): Formula[T] = Product(this, that)
+
+    override def equals(that: Any) = that match {
+      case thatF: Formula[_] => eqFn(RefPair(this, thatF))
+      case _ => false
+    }
   }
 
   object Formula {
@@ -47,17 +52,32 @@ object DagTests extends Properties("Dag") {
     def closure = Set(this)
   }
   case class Inc[T](in: Formula[T], by: Int) extends Formula[T] {
+    override val hashCode = (getClass, in, by).hashCode
     def evaluate = in.evaluate + by
     def closure = in.closure + this
   }
   case class Sum[T](left: Formula[T], right: Formula[T]) extends Formula[T] {
+    override val hashCode = (getClass, left, right).hashCode
     def evaluate = left.evaluate + right.evaluate
     def closure = (left.closure ++ right.closure) + this
   }
   case class Product[T](left: Formula[T], right: Formula[T]) extends Formula[T] {
+    override val hashCode = (getClass, left, right).hashCode
     def evaluate = left.evaluate * right.evaluate
     def closure = (left.closure ++ right.closure) + this
   }
+
+  def eqFn: Function[RefPair[Formula[_], Formula[_]], Boolean] =
+    Memoize.function[RefPair[Formula[_], Formula[_]], Boolean] {
+      case (pair, _) if pair.itemsEq => true
+      case (RefPair(Constant(a), Constant(b)), _) => a == b
+      case (RefPair(Inc(ia, ca), Inc(ib, cb)), rec) => (ca == cb) && rec(RefPair(ia, ib))
+      case (RefPair(Sum(lefta, leftb), Sum(righta, rightb)), rec) =>
+        rec(RefPair(lefta, righta)) && rec(RefPair(leftb, rightb))
+      case (RefPair(Product(lefta, leftb), Product(righta, rightb)), rec) =>
+        rec(RefPair(lefta, righta)) && rec(RefPair(leftb, rightb))
+      case other => false
+    }
 
   def testRule[T](start: Formula[T], expected: Formula[T], rule: Rule[Formula]): Prop = {
     val got = Dag.applyRule(start, toLiteral, rule)
@@ -119,6 +139,54 @@ object DagTests extends Properties("Dag") {
     }
   }
 
+  /**
+   * We should be able to totally evaluate these formulas
+   */
+  object EvaluationRule extends Rule[Formula] {
+    def apply[T](on: Dag[Formula]) = {
+      case Sum(Constant(a), Constant(b)) => Some(Constant(a + b))
+      case Product(Constant(a), Constant(b)) => Some(Constant(a * b))
+      case Inc(Constant(a), b) => Some(Constant(a + b))
+      case _ => None
+    }
+  }
+
+  @annotation.tailrec
+  final def fib[A](a0: A, a1: A, n: Int)(fn: (A, A) => A): A =
+    if (n <= 0) a0
+    else if (n == 1) a1
+    else fib(a1, fn(a0, a1), n - 1)(fn)
+
+  def timeit[A](a: => A): (Double, A) = {
+    val start = System.nanoTime()
+    val res = a
+    val end = System.nanoTime()
+    ((end - start).toDouble, res)
+  }
+
+ //This is a bit noisey due to timing, but often passes
+   property("Evaluation is at most n^(2.5)") = {
+     def fibFormula(n: Int) = fib(Formula(1), Formula(1), n)(Sum(_, _))
+
+     def check = {
+       val (t10, Constant(res10)) = timeit(Dag.applyRule(fibFormula(10), toLiteral, EvaluationRule))
+       val (t20, Constant(res20)) = timeit(Dag.applyRule(fibFormula(20), toLiteral, EvaluationRule))
+       val (t40, Constant(res40)) = timeit(Dag.applyRule(fibFormula(40), toLiteral, EvaluationRule))
+       val (t80, Constant(res80)) = timeit(Dag.applyRule(fibFormula(80), toLiteral, EvaluationRule))
+       val (t160, Constant(res160)) = timeit(Dag.applyRule(fibFormula(160), toLiteral, EvaluationRule))
+       // if this is polynomial = t(n) ~ Cn^k, so t(20)/t(10) == t(40)/t(20) == 2^k
+       val k = List(t160/t80, t80/t40, t40/t20, t20/t10).map(math.log(_)/math.log(2.0)).max
+       println(s"${t10}, ${t20}, ${t40}, ${t80}, ${t160}, $k")
+       (res10 == fib(1, 1, 10)(_ + _)) &&
+       (res20 == fib(1, 1, 20)(_ + _)) &&
+       (res40 == fib(1, 1, 40)(_ + _)) &&
+       (res80 == fib(1, 1, 80)(_ + _)) &&
+       (res160 == fib(1, 1, 160)(_ + _)) &&
+       (k < 2.5) // without properly memoized equality checks, this rule becomes exponential
+     }
+     check || check || check || check // try 4 times if needed to warm up the jit
+   }
+
   //Check the Node[T] <=> Id[T] is an Injection for all nodes reachable from the root
 
   property("toLiteral/Literal.evaluate is a bijection") = forAll(genForm) { form =>
@@ -163,17 +231,6 @@ object DagTests extends Properties("Dag") {
     }
   }
 
-  /**
-   * We should be able to totally evaluate these formulas
-   */
-  object EvaluationRule extends Rule[Formula] {
-    def apply[T](on: Dag[Formula]) = {
-      case Sum(Constant(a), Constant(b)) => Some(Constant(a + b))
-      case Product(Constant(a), Constant(b)) => Some(Constant(a * b))
-      case Inc(Constant(a), b) => Some(Constant(a + b))
-      case _ => None
-    }
-  }
   property("EvaluationRule totally evaluates") = forAll(genForm) { form =>
     testRule(form, Constant(form.evaluate), EvaluationRule)
   }
@@ -205,4 +262,28 @@ object DagTests extends Properties("Dag") {
 
     roots.forall(dag.fanOut(_) == 1)
   }
+
+  property("depth is non-decreasing further down the graph") =
+    forAll(genForm) { form =>
+      val (dag, id) = Dag(form, toLiteral)
+
+      import dag.depthOf
+
+      val di = dag.depthOfId(id)
+      val df = depthOf(form)
+      val prop1 = di.isDefined
+      val prop2 = di == df
+
+      def prop3 = form match {
+        case Constant(_) => di == Some(0)
+        case Inc(a, _) =>
+          (di.get == (depthOf(a).get + 1))
+        case Sum(a, b) =>
+          (di.get == (depthOf(a).get + 1)) || (di.get == (depthOf(b).get + 1))
+        case Product(a, b) =>
+          (di.get == (depthOf(a).get + 1)) || (di.get == (depthOf(b).get + 1))
+      }
+
+      prop1 && prop2 && prop3
+    }
 }
