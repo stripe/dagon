@@ -1,6 +1,7 @@
 package com.stripe.dagon
 
 import scala.util.hashing.MurmurHash3
+
 /**
  * A tuple2 that uses reference equality on items to do equality
  * useful for caching the results of pair-wise functions on DAGs.
@@ -9,22 +10,8 @@ import scala.util.hashing.MurmurHash3
  * recursion on DAGs.
  */
 case class RefPair[A <: AnyRef, B <: AnyRef](_1: A, _2: B) {
-  private[this] var hashCodeVar: Int = 0
 
-  override def hashCode =
-    if (hashCodeVar != 0) hashCodeVar
-    else {
-      val hc0 = MurmurHash3.productHash(this)
-      // make sure we don't use 0, which we are using
-      // to signal that we have not computed yet
-      val hc = if (hc0 == 0) -1 else hc0
-      // Store it here, but without thread sync
-      // if there are two threads, they may both
-      // compute, but hashCode should be stable
-      // so that's fine
-      hashCodeVar = hc
-      hc
-    }
+  lazy val hashCode: Int = MurmurHash3.productHash(this)
 
   override def equals(that: Any) = that match {
     case RefPair(thatA, thatB) => (_1 eq thatA) && (_2 eq thatB)
