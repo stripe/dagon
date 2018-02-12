@@ -165,7 +165,7 @@ object DagTests extends Properties("Dag") {
   }
 
  //This is a bit noisey due to timing, but often passes
-   property("Evaluation is at most n^(2.5)") = {
+  property("Evaluation is at most n^(3.0)") = {
      def fibFormula(n: Int) = fib(Formula(1), Formula(1), n)(Sum(_, _))
 
      def check = {
@@ -182,7 +182,7 @@ object DagTests extends Properties("Dag") {
        (res40 == fib(1, 1, 40)(_ + _)) &&
        (res80 == fib(1, 1, 80)(_ + _)) &&
        (res160 == fib(1, 1, 160)(_ + _)) &&
-       (k < 2.5) // without properly memoized equality checks, this rule becomes exponential
+       (k < 3.0) // without properly memoized equality checks, this rule becomes exponential
      }
      check || check || check || check // try 4 times if needed to warm up the jit
    }
