@@ -220,16 +220,33 @@ sealed abstract class Dag[N[_]] { self =>
     loop(this, cnt)
   }
 
-  /**
-   * This is only called by ensure
-   *
-   * Note, Expr must never be a Var
-   */
-  private def addExp[T](node: N[T], exp: Expr[N, T]): (Dag[N], Id[T]) = {
-    require(!exp.isVar)
-    val nodeId = Id[T](nextId)
-    (copy(id2Exp = idToExp.updated(nodeId, exp), id = nextId + 1), nodeId)
-  }
+  def depthOfId[A](i: Id[A]): Option[Int] =
+    depth(i)
+
+  def depthOf[A](n: N[A]): Option[Int] =
+    find(n).flatMap(depthOfId(_))
+
+  private val depth: Id[_] => Option[Int] =
+    Memoize.function[Id[_], Option[Int]] { (id, rec) =>
+      idToExp.get(id) match {
+        case None => None
+        case Some(Expr.Const(_)) => Some(0)
+        case Some(Expr.Var(id)) => rec(id)
+        case Some(Expr.Unary(id, _)) => rec(id).map(_ + 1)
+        case Some(Expr.Binary(id0, id1, _)) =>
+          for {
+            d0 <- rec(id0)
+            d1 <- rec(id1)
+          } yield math.max(d0, d1) + 1
+        case Some(Expr.Variadic(ids, _)) =>
+          ids.foldLeft(Option(0)) { (optD, id) =>
+            for {
+              d <- optD
+              d1 <- rec(id)
+            } yield math.max(d, d1) + 1
+          }
+      }
+    }
 
   /**
    * Find all the nodes currently in the graph
@@ -312,6 +329,17 @@ sealed abstract class Dag[N[_]] { self =>
       val msg = s"could not get node: $node\n from $this"
       throw new NoSuchElementException(msg)
     }
+
+  /**
+   * This is only called by ensure
+   *
+   * Note, Expr must never be a Var
+   */
+  private def addExp[T](node: N[T], exp: Expr[N, T]): (Dag[N], Id[T]) = {
+    require(!exp.isVar)
+    val nodeId = Id[T](nextId)
+    (copy(id2Exp = idToExp.updated(nodeId, exp), id = nextId + 1), nodeId)
+  }
 
   /**
    * ensure the given literal node is present in the Dag
@@ -434,9 +462,9 @@ sealed abstract class Dag[N[_]] { self =>
     def dependsOn(expr: Expr[N, _]): Boolean = expr match {
       case Expr.Const(_) => false
       case Expr.Var(id) => sys.error(s"logic error: Var($id)")
-      case Expr.Unary(id, _) => evaluate(id) == node
-      case Expr.Binary(id0, id1, _) => evaluate(id0) == node || evaluate(id1) == node
-      case Expr.Variadic(ids, _) => ids.exists(evaluate(_) == node)
+      case Expr.Unary(id, _) => evaluatesTo(id, node)
+      case Expr.Binary(id0, id1, _) => evaluatesTo(id0, node) || evaluatesTo(id1, node)
+      case Expr.Variadic(ids, _) => ids.exists(evaluatesTo(_, node))
     }
 
     // TODO, we can do a much better algorithm that builds this function
@@ -450,6 +478,13 @@ sealed abstract class Dag[N[_]] { self =>
       }
     }
     idToExp.optionMap(pointsToNode).toSet
+  }
+
+  private def evaluatesTo[A, B](id: Id[A], n: N[B]): Boolean = {
+    val idN = evaluate(id)
+    // since we cache, reference equality will often work
+    val refEq = idN.asInstanceOf[AnyRef] eq id.asInstanceOf[AnyRef]
+    refEq || (idN == n)
   }
 
   /**
