@@ -11,7 +11,7 @@ import scala.util.hashing.MurmurHash3
  */
 case class RefPair[A <: AnyRef, B <: AnyRef](_1: A, _2: B) {
 
-  lazy val hashCode: Int = MurmurHash3.productHash(this)
+  override lazy val hashCode: Int = MurmurHash3.productHash(this)
 
   override def equals(that: Any) = that match {
     case RefPair(thatA, thatB) => (_1 eq thatA) && (_2 eq thatB)
