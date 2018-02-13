@@ -428,7 +428,7 @@ sealed abstract class Dag[N[_]] { self =>
    * Is this node a root of this graph
    */
   def isRoot(n: N[_]): Boolean =
-    findAll(n).exists(roots)
+    roots.iterator.exists(evaluatesTo(_, n))
 
   /**
    * Is this node in this DAG
@@ -455,30 +455,50 @@ sealed abstract class Dag[N[_]] { self =>
   }
 
   /**
-   * list all the nodes that depend on the given node
+   * It is as expensive to compute this for the whole graph
+   * as it is to answer a single query
+   * we already cache the N pointed to, so this structure
+   * should be small
    */
-  def dependentsOf(node: N[_]): Set[N[_]] = {
-
-    def dependsOn(expr: Expr[N, _]): Boolean = expr match {
-      case Expr.Const(_) => false
+  private lazy val dependencyMap: Map[N[_], Set[N[_]]] = {
+    def dependsOnSet(expr: Expr[N, _]): Set[N[_]] = expr match {
+      case Expr.Const(_) => Set.empty
       case Expr.Var(id) => sys.error(s"logic error: Var($id)")
-      case Expr.Unary(id, _) => evaluatesTo(id, node)
-      case Expr.Binary(id0, id1, _) => evaluatesTo(id0, node) || evaluatesTo(id1, node)
-      case Expr.Variadic(ids, _) => ids.exists(evaluatesTo(_, node))
+      case Expr.Unary(id, _) => Set(evaluate(id))
+      case Expr.Binary(id0, id1, _) => Set(evaluate(id0), evaluate(id1))
+      case Expr.Variadic(ids, _) => ids.iterator.map(evaluate(_)).toSet
     }
 
-    // TODO, we can do a much better algorithm that builds this function
-    // for all nodes in the dag
-    val pointsToNode = new FunctionK[HMap[Id, Expr[N, ?]]#Pair, Lambda[x => Option[N[x]]]] {
+    type SetConst[T] = (N[T], Set[N[_]])
+    val pointsToNode = new FunctionK[HMap[Id, Expr[N, ?]]#Pair, Lambda[x => Option[SetConst[x]]]] {
       def toFunction[T] = {
         case (id, expr) =>
+          // here are the nodes we depend on:
+
           // We can ignore Vars here, since all vars point to a final expression
-          if ((!expr.isVar) && dependsOn(expr)) Some(evaluate(id))
+          if (!expr.isVar) {
+            val depSet = dependsOnSet(expr)
+            Some((evalMemo(expr), depSet))
+          }
           else None
       }
     }
-    idToExp.optionMap(pointsToNode).toSet
+
+    idToExp.optionMap[SetConst](pointsToNode)
+      .flatMap { case (n, deps) =>
+        deps.map((_, n): (N[_], N[_]))
+      }
+      .groupBy(_._1)
+      .iterator
+      .map { case (k, vs) => (k, vs.iterator.map(_._2).toSet) }
+      .toMap
   }
+
+  /**
+   * list all the nodes that depend on the given node
+   */
+  def dependentsOf(node: N[_]): Set[N[_]] =
+    dependencyMap.getOrElse(node, Set.empty)
 
   private def evaluatesTo[A, B](id: Id[A], n: N[B]): Boolean = {
     val idN = evaluate(id)
