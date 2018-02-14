@@ -1,5 +1,6 @@
 package com.stripe.dagon
 
+import java.io.Serializable
 /**
  * This is a useful cache for memoizing function.
  *
@@ -8,7 +9,7 @@ package com.stripe.dagon
  * lose cache values (i.e. compute some keys twice), but we will never
  * produce incorrect values.
  */
-sealed class Cache[K, V] private (init: Map[K, V]) {
+sealed class Cache[K, V] private (init: Map[K, V]) extends Serializable {
 
   private[this] var map: Map[K, V] = init
 

@@ -17,13 +17,14 @@
 
 package com.stripe.dagon
 
+import java.io.Serializable
 /**
  * This is a weak heterogenous map. It uses equals on the keys,
  * so it is your responsibilty that if k: K[_] == k2: K[_] then
  * the types are actually equal (either be careful or store a
  * type identifier).
  */
-final class HMap[K[_], V[_]](protected val map: Map[K[_], V[_]]) {
+final class HMap[K[_], V[_]](protected val map: Map[K[_], V[_]]) extends Serializable {
 
   type Pair[t] = (K[t], V[t])
 

@@ -1,5 +1,6 @@
 package com.stripe.dagon
 
+import java.io.Serializable
 /**
  * This is a useful cache for memoizing natural transformations.
  *
@@ -8,7 +9,7 @@ package com.stripe.dagon
  * lose cache values (i.e. compute some keys twice), but we will never
  * produce incorrect values.
  */
-sealed class HCache[K[_], V[_]] private (init: HMap[K, V]) {
+sealed class HCache[K[_], V[_]] private (init: HMap[K, V]) extends Serializable {
 
   private[this] var hmap: HMap[K, V] = init
 

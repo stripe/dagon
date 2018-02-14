@@ -17,6 +17,7 @@
 
 package com.stripe.dagon
 
+import java.io.Serializable
 /**
  * Expr[N, T] is an expression of a graph of container nodes N[_] with
  * result type N[T]. These expressions are like the Literal[T, N] graphs
@@ -33,7 +34,7 @@ package com.stripe.dagon
  * Which seems to show a way to do currying, so we can handle general
  * arity
  */
-sealed trait Expr[N[_], T] {
+sealed trait Expr[N[_], T] extends Serializable {
   def evaluate(idToExp: HMap[Id, Expr[N, ?]]): N[T] =
     Expr.evaluate(idToExp, this)
 
