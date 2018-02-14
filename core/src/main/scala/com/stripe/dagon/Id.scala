@@ -1,5 +1,7 @@
 package com.stripe.dagon
 
+import java.util.concurrent.atomic.AtomicLong
+
 /**
  * The Expressions are assigned Ids. Each Id is associated with
  * an expression of inner type T.
@@ -10,12 +12,21 @@ package com.stripe.dagon
  *
  * T is a phantom type used by the type system
  */
-final case class Id[T](id: Int)
+final class Id[T] private (val serial: Long) {
+  require(serial >= 0, s"counter overflow has occurred: $serial")
+  override def toString: String = s"Id($serial)"
+}
 
 object Id {
+
+  private[this] val counter = new AtomicLong(0)
+
+  def next[T](): Id[T] =
+    new Id[T](counter.getAndIncrement())
+
   implicit def idOrdering[T]: Ordering[Id[T]] =
     new Ordering[Id[T]] {
       def compare(a: Id[T], b: Id[T]) =
-        Integer.compare(a.id, b.id)
+        java.lang.Long.compare(a.serial, b.serial)
     }
 }
