@@ -29,12 +29,12 @@ your `build.sbt` file:
 ```scala
 // use this snippet for the JVM
 libraryDependencies ++= List(
-  "com.stripe" %% "dagon-core" % "0.2.4",
+  "com.stripe" %% "dagon-core" % "0.3.0",
   compilerPlugin("org.spire-math" %% "kind-projector" % "0.9.4"))
 
 // use this snippet for JS, or cross-building
 libraryDependencies ++= List(
-  "com.stripe" %%% "dagon-core" % "0.2.4",
+  "com.stripe" %%% "dagon-core" % "0.3.0",
   compilerPlugin("org.spire-math" %% "kind-projector" % "0.9.4"))
 ```
 
