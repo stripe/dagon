@@ -39,11 +39,6 @@ sealed abstract class Dag[N[_]] { self =>
   protected def roots: Set[Id[_]]
 
   /**
-   * This is the next Id value which will be allocated
-   */
-  protected def nextId: Int
-
-  /**
    * Convert a N[T] to a Literal[T, N].
    */
   def toLiteral: FunctionK[N, Literal[N, ?]]
@@ -64,13 +59,11 @@ sealed abstract class Dag[N[_]] { self =>
   private def copy(
       id2Exp: HMap[Id, Expr[N, ?]] = self.idToExp,
       node2Literal: FunctionK[N, Literal[N, ?]] = self.toLiteral,
-      gcroots: Set[Id[_]] = self.roots,
-      id: Int = self.nextId
+      gcroots: Set[Id[_]] = self.roots
   ): Dag[N] = new Dag[N] {
     def idToExp = id2Exp
     def roots = gcroots
     def toLiteral = node2Literal
-    def nextId = id
   }
 
   // Produce a new DAG that is equivalent to this one, but which frees
@@ -79,17 +72,7 @@ sealed abstract class Dag[N[_]] { self =>
   private def gc: Dag[N] = {
     val keepers = reachableIds
     if (idToExp.forallKeys(keepers)) this
-    else {
-      val id2Exp = idToExp.filterKeys(keepers)
-      // if we have GC'd an id it is because
-      // it did not escape. I.e. it is not a root,
-      // nor reachable from the root, so we can
-      // possibly lower the nextId, which is a bit
-      // nice because (unfortunately) Ids wrap Int
-      // not Long, so overflow is possible
-      val nextId = id2Exp.keySet.iterator.map(_.id).max
-      copy(id2Exp = id2Exp, id = nextId + 1)
-    }
+    else copy(id2Exp = idToExp.filterKeys(keepers))
   }
 
   /**
@@ -184,7 +167,7 @@ sealed abstract class Dag[N[_]] { self =>
               // new id. To fix this, re-reassign
               // n1 to a new id, since that new id won't be
               // updated to point to itself, we prevent a loop
-              val dag1 = copy(id2Exp = idToExp.updated(Id(nextId), expr), id = nextId + 1)
+              val dag1 = copy(id2Exp = idToExp.updated(Id.next(), expr))
               val (dag2, newId) = dag1.ensure(n2)
 
               // We can't delete Ids which may have been shared
@@ -337,8 +320,8 @@ sealed abstract class Dag[N[_]] { self =>
    */
   private def addExp[T](node: N[T], exp: Expr[N, T]): (Dag[N], Id[T]) = {
     require(!exp.isVar)
-    val nodeId = Id[T](nextId)
-    (copy(id2Exp = idToExp.updated(nodeId, exp), id = nextId + 1), nodeId)
+    val nodeId = Id.next[T]()
+    (copy(id2Exp = idToExp.updated(nodeId, exp)), nodeId)
   }
 
   /**
@@ -541,7 +524,6 @@ object Dag {
       val idToExp = HMap.empty[Id, Expr[N, ?]]
       val toLiteral = n2l
       val roots = Set.empty[Id[_]]
-      val nextId = 0
     }
 
   /**
