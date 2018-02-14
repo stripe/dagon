@@ -1,9 +1,11 @@
 package com.stripe.dagon
 
+import java.io.Serializable
+
 /**
  * This implements a simplification rule on Dags
  */
-trait Rule[N[_]] { self =>
+trait Rule[N[_]] extends Serializable { self =>
 
   /**
    * If the given Id can be replaced with a simpler expression,

@@ -2,6 +2,7 @@ package com.stripe.dagon
 
 import java.util.concurrent.atomic.AtomicLong
 
+import java.io.Serializable
 /**
  * The Expressions are assigned Ids. Each Id is associated with
  * an expression of inner type T.
@@ -12,14 +13,14 @@ import java.util.concurrent.atomic.AtomicLong
  *
  * T is a phantom type used by the type system
  */
-final class Id[T] private (val serial: Long) {
+final class Id[T] private (val serial: Long) extends Serializable {
   require(serial >= 0, s"counter overflow has occurred: $serial")
   override def toString: String = s"Id($serial)"
 }
 
 object Id {
 
-  private[this] val counter = new AtomicLong(0)
+  @transient private[this] val counter = new AtomicLong(0)
 
   def next[T](): Id[T] =
     new Id[T](counter.getAndIncrement())

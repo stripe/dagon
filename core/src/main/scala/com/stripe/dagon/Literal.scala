@@ -1,11 +1,16 @@
 package com.stripe.dagon
 
+import java.io.Serializable
+import scala.util.hashing.MurmurHash3
+
 /**
  * This represents literal expressions (no variable redirection)
  * of container nodes of type N[T]
  */
-sealed trait Literal[N[_], T] {
+sealed trait Literal[N[_], T] extends Serializable { self: Product =>
   def evaluate: N[T] = Literal.evaluate(this)
+
+  override val hashCode: Int = MurmurHash3.productHash(self)
 
   /**
    * Here we memoize as we check equality and always check reference
@@ -13,34 +18,25 @@ sealed trait Literal[N[_], T] {
    * graphs that merge back often
    */
   override def equals(that: Any) = that match {
-    case thatF: Literal[_, _] => Literal.eqFn[N](RefPair(this, thatF.asInstanceOf[Literal[N, _]]))
+    case thatF: Literal[_, _] =>
+      if (thatF eq this) true
+      else if (thatF.hashCode != hashCode) false
+      else Literal.eqFn[N](RefPair(this, thatF.asInstanceOf[Literal[N, _]]))
     case _ => false
   }
 }
 
 object Literal {
 
-  case class Const[N[_], T](override val evaluate: N[T]) extends Literal[N, T] {
-    // cache hashCode since we hit it so much.
-    override val hashCode = (getClass, evaluate).hashCode
-  }
+  case class Const[N[_], T](override val evaluate: N[T]) extends Literal[N, T]
 
-  case class Unary[N[_], T1, T2](arg: Literal[N, T1], fn: N[T1] => N[T2]) extends Literal[N, T2] {
-    // cache hashCode since we hit it so much.
-    override val hashCode = (getClass, arg, fn).hashCode
-  }
+  case class Unary[N[_], T1, T2](arg: Literal[N, T1], fn: N[T1] => N[T2]) extends Literal[N, T2]
 
   case class Binary[N[_], T1, T2, T3](arg1: Literal[N, T1],
                                       arg2: Literal[N, T2],
-                                      fn: (N[T1], N[T2]) => N[T3]) extends Literal[N, T3] {
-    // cache hashCode since we hit it so much.
-    override val hashCode = (getClass, arg1, arg2, fn).hashCode
-  }
+                                      fn: (N[T1], N[T2]) => N[T3]) extends Literal[N, T3]
 
-  case class Variadic[N[_], T1, T2](args: List[Literal[N, T1]], fn: List[N[T1]] => N[T2]) extends Literal[N, T2]{
-    // cache hashCode since we hit it so much.
-    override val hashCode = (getClass, args, fn).hashCode
-  }
+  case class Variadic[N[_], T1, T2](args: List[Literal[N, T1]], fn: List[N[T1]] => N[T2]) extends Literal[N, T2]
 
   /**
    * This evaluates a literal formula back to what it represents

@@ -17,12 +17,14 @@
 
 package com.stripe.dagon
 
+import java.io.Serializable
+
 /**
  * Represents a directed acyclic graph (DAG).
  *
  * The type N[_] represents the type of nodes in the graph.
  */
-sealed abstract class Dag[N[_]] { self =>
+sealed abstract class Dag[N[_]] extends Serializable { self =>
 
   /**
    * These have package visibility to test
