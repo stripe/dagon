@@ -185,7 +185,25 @@ sealed abstract class Dag[N[_]] extends Serializable { self =>
       }
     }
 
-    idToExp.optionMap[DagT](f).headOption.getOrElse(this)
+    // We want to apply rules
+    // in a deterministic order so they are reproducible
+    val ids = idToExp.keySet.toArray.asInstanceOf[Array[Id[Any]]]
+    scala.util.Sorting.quickSort(ids)
+
+    ids
+      .iterator
+      .map { id =>
+        // use the method to fix the types below
+        // if we don't use DagT here, scala thinks
+        // it is unused even though we use it above
+        def go[A](id: Id[A]): Option[DagT[A]] = {
+          val expr = idToExp(id)
+          f.toFunction[A]((id, expr))
+        }
+        go(id)
+      }
+      .collectFirst { case Some(dag) => dag }
+      .getOrElse(this)
   }
 
   /**
