@@ -683,7 +683,7 @@ class DataFlowTest extends FunSuite {
     val incCount = 10000
 
     val incFlow = incrementChain(IteratorSource((0 to 100).iterator), incCount)
-    val (dag, id) = Dag(inc1000, Flow.toLiteral)
+    val (dag, id) = Dag(incFlow, Flow.toLiteral)
 
     val optimizedDag = dag(allRules)
 
