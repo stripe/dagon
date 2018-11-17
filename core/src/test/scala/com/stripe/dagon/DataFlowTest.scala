@@ -671,4 +671,27 @@ class DataFlowTest extends FunSuite {
     val d4 = d3.apply(Flow.explicitFork)
     assert(d4.evaluate(id1) == OptionMapped(Fork(src), fn1))
   }
+
+  test("test a giant graph") {
+    import Flow._
+
+    @annotation.tailrec
+    def incrementChain(f: Flow[Int], incs: Int): Flow[Int] =
+      if (incs <= 0) f
+      else incrementChain(f.map(_ + 1), incs - 1)
+
+    val incCount = 10000
+
+    val incFlow = incrementChain(IteratorSource((0 to 100).iterator), incCount)
+    val (dag, id) = Dag(inc1000, Flow.toLiteral)
+
+    val optimizedDag = dag(allRules)
+
+    optimizedDag.evaluate(id) match {
+      case IteratorSource(it)=>
+        assert(it.toList == (0 to 100).map(_ + incCount).toList)
+      case other =>
+        fail(s"expected to be optimized: $other")
+    }
+  }
 }
