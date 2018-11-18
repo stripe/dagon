@@ -18,6 +18,7 @@
 package com.stripe.dagon
 
 import java.io.Serializable
+import scala.util.control.TailCalls
 /**
  * Expr[N, T] is an expression of a graph of container nodes N[_] with
  * result type N[T]. These expressions are like the Literal[T, N] graphs
@@ -72,8 +73,8 @@ object Expr {
    * FunctionK is only valid for the given idToExp which is captured in this
    * closure.
    */
-  def evaluateMemo[N[_]](idToExp: HMap[Id, Expr[N, ?]]): FunctionK[Expr[N, ?], N] =
-    Memoize.functionK[Expr[N, ?], N](new Memoize.RecursiveK[Expr[N, ?], N] {
+  def evaluateMemo[N[_]](idToExp: HMap[Id, Expr[N, ?]]): FunctionK[Expr[N, ?], N] = {
+    val fast = Memoize.functionK[Expr[N, ?], N](new Memoize.RecursiveK[Expr[N, ?], N] {
       def toFunction[T] = {
         case (Const(n), _) => n
         case (Var(id), rec) => rec(idToExp(id))
@@ -85,4 +86,97 @@ object Expr {
           fn(args.map { id => rec(idToExp(id)) })
       }
     })
+
+    import TailCalls._
+
+    val slowAndSafe = Memoize.functionKTailRec[Expr[N, ?], N](new Memoize.RecursiveKTailRec[Expr[N, ?], N] {
+      def toFunction[T] = {
+        case (Const(n), _) => done(n)
+        case (Var(id), rec) => rec(idToExp(id))
+        case (Unary(id, fn), rec) => rec(idToExp(id)).map(fn)
+        case (Binary(id1, id2, fn), rec) =>
+          for {
+            nn1 <- rec(idToExp(id1))
+            nn2 <- rec(idToExp(id2))
+          } yield fn(nn1, nn2)
+        case (Variadic(args, fn), rec) =>
+          def loop[A](as: List[Id[A]]): TailRec[List[N[A]]] =
+            as match {
+              case Nil => done(Nil)
+              case h :: t => loop(t).flatMap(tt => rec(idToExp(h)).map(_ :: tt))
+            }
+          loop(args).map(fn)
+      }
+    })
+
+    def onStackGoSlow[A](lit: Expr[N, A], na: => N[A]): N[A] =
+      try na
+      catch {
+        case _: StackOverflowError =>
+          slowAndSafe(lit).result
+      }
+
+    /*
+     * We *non-recursively* use either the fast approach or the slow approach
+     */
+    Memoize.functionK[Expr[N, ?], N](new Memoize.RecursiveK[Expr[N, ?], N] {
+      def toFunction[T] = { case (u, _) => onStackGoSlow(u, fast(u)) }
+    })
+  }
+
+  /**
+   * Build a memoized FunctionK for this particular idToExp.
+   * Clearly, this FunctionK is only valid for the given idToExp which is captured in this
+   * closure.
+   */
+  def evaluateMemoLiteral[N[_]](idToExp: HMap[Id, Expr[N, ?]]): FunctionK[Expr[N, ?], Literal[N, ?]] = {
+    val fast = Memoize.functionK[Expr[N, ?], Literal[N, ?]](new Memoize.RecursiveK[Expr[N, ?], Literal[N, ?]] {
+      def toFunction[T] = {
+        case (Const(n), _) => Literal.Const(n)
+        case (Var(id), rec) => rec(idToExp(id))
+        case (Unary(id, fn), rec) =>
+          Literal.Unary(rec(idToExp(id)), fn)
+        case (Binary(id1, id2, fn), rec) =>
+          Literal.Binary(rec(idToExp(id1)), rec(idToExp(id2)), fn)
+        case (Variadic(args, fn), rec) =>
+          Literal.Variadic(args.map { id => rec(idToExp(id)) }, fn)
+      }
+    })
+
+    import TailCalls._
+
+    val slowAndSafe = Memoize.functionKTailRec[Expr[N, ?], Literal[N, ?]](new Memoize.RecursiveKTailRec[Expr[N, ?], Literal[N, ?]] {
+      def toFunction[T] = {
+        case (Const(n), _) => done(Literal.Const(n))
+        case (Var(id), rec) => rec(idToExp(id))
+        case (Unary(id, fn), rec) => rec(idToExp(id)).map(Literal.Unary(_, fn))
+        case (Binary(id1, id2, fn), rec) =>
+          for {
+            nn1 <- rec(idToExp(id1))
+            nn2 <- rec(idToExp(id2))
+          } yield Literal.Binary(nn1, nn2, fn)
+        case (Variadic(args, fn), rec) =>
+          def loop[A](as: List[Id[A]]): TailRec[List[Literal[N, A]]] =
+            as match {
+              case Nil => done(Nil)
+              case h :: t => loop(t).flatMap(tt => rec(idToExp(h)).map(_ :: tt))
+            }
+          loop(args).map(Literal.Variadic(_, fn))
+      }
+    })
+
+    def onStackGoSlow[A](expr: Expr[N, A]): Literal[N, A] =
+      try fast(expr)
+      catch {
+        case _: StackOverflowError =>
+          slowAndSafe(expr).result
+      }
+
+    /*
+     * We *non-recursively* use either the fast approach or the slow approach
+     */
+    Memoize.functionK[Expr[N, ?], Literal[N, ?]](new Memoize.RecursiveK[Expr[N, ?], Literal[N, ?]] {
+      def toFunction[T] = { case (u, _) => onStackGoSlow(u) }
+    })
+  }
 }

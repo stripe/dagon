@@ -18,7 +18,7 @@
 package com.stripe.dagon
 
 import java.io.Serializable
-
+import scala.util.control.TailCalls
 /**
  * Represents a directed acyclic graph (DAG).
  *
@@ -49,9 +49,9 @@ sealed abstract class Dag[N[_]] extends Serializable { self =>
   private val idToN: HCache[Id, Lambda[t => Option[N[t]]]] =
     HCache.empty[Id, Lambda[t => Option[N[t]]]]
 
-  // Caches polymorphic functions of type N[T] => Option[Id[T]]
-  private val nodeToId: HCache[N, Lambda[t => Option[Id[t]]]] =
-    HCache.empty[N, Lambda[t => Option[Id[t]]]]
+  // Caches polymorphic functions of type Literal[N, T] => Option[Id[T]]
+  private val litToId: HCache[Literal[N, ?], Lambda[t => Option[Id[t]]]] =
+    HCache.empty[Literal[N, ?], Lambda[t => Option[Id[t]]]]
 
   // Caches polymorphic functions of type Expr[N, T] => N[T]
   private val evalMemo = Expr.evaluateMemo(idToExp)
@@ -274,9 +274,15 @@ sealed abstract class Dag[N[_]] extends Serializable { self =>
    * to the given N[T]
    */
   def find[T](node: N[T]): Option[Id[T]] =
-    nodeToId.getOrElseUpdate(
-      node, {
-        findAll(node).filterNot { id => idToExp(id).isVar } match {
+    findLiteral(toLiteral(node), node)
+
+  private def findLiteral[T](lit: Literal[N, T], n: => N[T]): Option[Id[T]] =
+    litToId.getOrElseUpdate(
+      lit, {
+        // It's important to not compare equality in the Literal
+        // space because it can have function members that are
+        // equivalent, but not .equals
+        findAll(n).filterNot { id => idToExp(id).isVar } match {
           case Stream.Empty =>
             // if the node is the in the graph it has at least
             // one non-Var node
@@ -321,7 +327,6 @@ sealed abstract class Dag[N[_]] extends Serializable { self =>
     idToExp.optionMap(f).asInstanceOf[Stream[Id[T]]]
   }
 
-
   /**
    * This throws if the node is missing, use find if this is not
    * a logic error in your programming. With dependent types we could
@@ -338,7 +343,7 @@ sealed abstract class Dag[N[_]] extends Serializable { self =>
    *
    * Note, Expr must never be a Var
    */
-  private def addExp[T](node: N[T], exp: Expr[N, T]): (Dag[N], Id[T]) = {
+  private def addExp[T](exp: Expr[N, T]): (Dag[N], Id[T]) = {
     require(!exp.isVar)
     val nodeId = Id.next[T]()
     (copy(id2Exp = idToExp.updated(nodeId, exp)), nodeId)
@@ -350,41 +355,81 @@ sealed abstract class Dag[N[_]] extends Serializable { self =>
    * at most one id in the graph. Put another way, for all
    * Id[T] in the graph evaluate(id) is distinct.
    */
-  protected def ensure[T](node: N[T]): (Dag[N], Id[T]) =
-    find(node) match {
+  protected def ensure[T](node: N[T]): (Dag[N], Id[T]) = {
+    val lit = toLiteral(node)
+    try ensureFast(lit)
+    catch {
+      case _: StackOverflowError =>
+        ensureRec(lit).result
+    }
+  }
+
+  /*
+   * This does recursion on the stack, which is faster, but can overflow
+   */
+  protected def ensureFast[T](lit: Literal[N, T]): (Dag[N], Id[T]) =
+    findLiteral(lit, lit.evaluate) match {
       case Some(id) => (this, id)
       case None =>
-        toLiteral(node) match {
+        lit match {
           case Literal.Const(n) =>
-            /*
-             * Since the code is not performance critical, but correctness critical, and we can't
-             * check this property with the typesystem easily, check it here
-             */
-            require(n == node,
-                    s"Equality or toLiteral is incorrect: nodeToLit($node) = Const($n)")
-            addExp(node, Expr.Const(n))
+            addExp(Expr.Const(n))
           case Literal.Unary(prev, fn) =>
-            val (exp1, idprev) = ensure(prev.evaluate)
-            exp1.addExp(node, Expr.Unary(idprev, fn))
+            val (exp1, idprev) = ensureFast(prev)
+            exp1.addExp(Expr.Unary(idprev, fn))
           case Literal.Binary(n1, n2, fn) =>
-            // use a common memoized function on both branches
-            // this is safe because Literal does not know about Id
-            val evalLit = Literal.evaluateMemo[N]
-            val (exp1, id1) = ensure(evalLit(n1))
-            val (exp2, id2) = exp1.ensure(evalLit(n2))
-            exp2.addExp(node, Expr.Binary(id1, id2, fn))
+            val (exp1, id1) = ensureFast(n1)
+            val (exp2, id2) = exp1.ensureFast(n2)
+            exp2.addExp(Expr.Binary(id1, id2, fn))
           case Literal.Variadic(args, fn) =>
-            val evalLit = Literal.evaluateMemo[N]
-            val init: Dag[N] = this
-            def go[A](args: List[Literal[N, A]]): (Dag[N], List[Id[A]]) = {
-              val (e, ids) = args.foldLeft((init, List.empty[Id[A]])) { case ((exp, ids), n) =>
-                val (nextExp, id) = exp.ensure(evalLit(n))
-                (nextExp, id :: ids)
+            @annotation.tailrec
+            def go[A](dag: Dag[N], args: List[Literal[N, A]], acc: List[Id[A]]): (Dag[N], List[Id[A]]) =
+              args match {
+                case Nil => (dag, acc.reverse)
+                case h :: tail =>
+                   val (dag1, hid) = dag.ensureFast(h)
+                   go(dag1,tail, hid :: acc)
               }
-              (e, ids.reverse)
+
+            val (d, ids) = go(this, args, Nil)
+            d.addExp(Expr.Variadic(ids, fn))
+        }
+    }
+
+  protected def ensureRec[T](lit: Literal[N, T]): TailCalls.TailRec[(Dag[N], Id[T])] =
+    findLiteral(lit, lit.evaluate) match {
+      case Some(id) => TailCalls.done((this, id))
+      case None =>
+        lit match {
+          case Literal.Const(n) =>
+            TailCalls.done(addExp(Expr.Const(n)))
+          case Literal.Unary(prev, fn) =>
+            TailCalls.tailcall(ensureRec(prev)).map { case (exp1, idprev) =>
+              exp1.addExp(Expr.Unary(idprev, fn))
             }
-            val (exp1, ids) = go(args)
-            exp1.addExp(node, Expr.Variadic(ids, fn))
+          case Literal.Binary(n1, n2, fn) =>
+            for {
+              p1 <- TailCalls.tailcall(ensureRec(n1))
+              (exp1, id1) = p1
+              p2 <- TailCalls.tailcall(exp1.ensureRec(n2))
+              (exp2, id2) = p2
+            } yield exp2.addExp(Expr.Binary(id1, id2, fn))
+          case Literal.Variadic(args, fn) =>
+            def go[A](dag: Dag[N], args: List[Literal[N, A]]): TailCalls.TailRec[(Dag[N], List[Id[A]])] =
+              args match {
+                case Nil => TailCalls.done((dag, Nil))
+                case h :: tail =>
+                  for {
+                    rest <- go(dag, tail)
+                    (dag1, its) = rest
+                    dagH <- TailCalls.tailcall(dag1.ensureRec(h))
+                    (dag2, idh) = dagH
+                  } yield (dag2, idh :: its)
+              }
+
+            go(this, args).map { case (d, ids)  =>
+              d.addExp(Expr.Variadic(ids, fn))
+            }
         }
     }
 
