@@ -170,7 +170,30 @@ object DataFlowTest {
     }
 
     private case class ComposedOM[A, B, C](fn1: A => Option[B], fn2: B => Option[C]) extends Function1[A, Option[C]] {
-      def apply(a: A): Option[C] = fn1(a).flatMap(fn2)
+      def apply(a: A): Option[C] = {
+        // TODO this would be 2x faster if we do it repeatedly and we right associate once in
+        // advance
+        // this type checks, but can't be tailrec
+        //def loop[A1, B1](start: A1, first: A1 => Option[B1], next: B1 => Option[C]): Option[C] =
+        @annotation.tailrec
+        def loop(start: Any, first: Any => Option[Any], next: Any => Option[C]): Option[C] =
+          first match {
+            case ComposedOM(f1, f2) =>
+              loop(start, f1, ComposedOM(f2, next))
+            case notComp =>
+              notComp(start) match {
+                case None => None
+                case Some(b) =>
+                  next match {
+                    case ComposedOM(f1, f2) =>
+                      loop(b, f1, f2)
+                    case notComp => notComp(b)
+                  }
+              }
+          }
+
+        loop(a, fn1.asInstanceOf[Any => Option[Any]], fn2.asInstanceOf[Any => Option[C]])
+      }
     }
     private case class ComposedCM[A, B, C](fn1: A => TraversableOnce[B], fn2: B => TraversableOnce[C]) extends Function1[A, TraversableOnce[C]] {
       def apply(a: A): TraversableOnce[C] = fn1(a).flatMap(fn2)
@@ -220,10 +243,25 @@ object DataFlowTest {
      * f.optionMap(fn1).optionMap(fn2) == f.optionMap { t => fn1(t).flatMap(fn2) }
      * we use object to get good toString for debugging
      */
-    object composeOptionMapped extends PartialRule[Flow] {
-      def applyWhere[T](on: Dag[Flow]) = {
-        case (OptionMapped(inner @ OptionMapped(s, fn0), fn1)) if on.hasSingleDependent(inner) =>
-          OptionMapped(s, ComposedOM(fn0, fn1))
+    object composeOptionMapped extends Rule[Flow] {
+      // This recursively scoops up as much as we can into one OptionMapped
+      // the Any here is to make tailrec work, which until 2.13 does not allow
+      // the types to change on the calls
+      @annotation.tailrec
+      private def compose[B](dag: Dag[Flow], flow: Flow[Any], fn: Any => Option[B], diff: Boolean): (Boolean, OptionMapped[_, B]) =
+        flow match {
+          case OptionMapped(inner, fn1) if dag.hasSingleDependent(flow) =>
+            compose(dag, inner, ComposedOM(fn1, fn), true)
+          case _ => (diff, OptionMapped(flow, fn))
+        }
+
+
+      def apply[T](on: Dag[Flow]) = {
+        case OptionMapped(inner, fn) =>
+          val (changed, res) = compose(on, inner, fn, false)
+          if (changed) Some(res)
+          else None
+        case _ => None
       }
     }
 
@@ -798,16 +836,14 @@ class DataFlowTest extends FunSuite {
     val incFlow = incrementChain(IteratorSource((0 to 100).iterator), incCount)
     val (dag, id) = Dag(incFlow, Flow.toLiteralTail)
 
-    // This currently takes too long, it would be interesting
-    // to have a loop based on time: run at most N seconds
-    // val optimizedDag = dag(allRules)
+    val optimizedDag = dag(allRules)
 
-    // optimizedDag.evaluate(id) match {
-    //   case IteratorSource(it)=>
-    //     assert(it.toList == (0 to 100).map(_ + incCount).toList)
-    //   case other =>
-    //     fail(s"expected to be optimized: $other")
-    // }
+    optimizedDag.evaluate(id) match {
+      case IteratorSource(it)=>
+        assert(it.toList == (0 to 100).map(_ + incCount).toList)
+      case other =>
+        fail(s"expected to be optimized: $other")
+    }
   }
 }
 

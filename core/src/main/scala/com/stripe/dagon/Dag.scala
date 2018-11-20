@@ -676,7 +676,12 @@ object Dag {
       val idToExp = HMap.empty[Id, Expr[N, ?]]
       val toLiteral = n2l
       val roots = Set.empty[Id[_]]
-      val idDepGraph = SortedMap.empty[Id[Any], Set[Id[_]]].asInstanceOf[SortedMap[Id[_], Set[Id[_]]]]
+      // Using the reverse order here is important since we tend to expose the deepest
+      // nodes in the graph first. This allows rules to do more work internally and be
+      // MUCH faster if they can recursively apply themselves before making a modification
+      // to the graph
+      val idDepGraph = SortedMap.empty[Id[Any], Set[Id[_]]](Id.idOrdering[Any].reverse)
+        .asInstanceOf[SortedMap[Id[_], Set[Id[_]]]]
     }
 
   /**
