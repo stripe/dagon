@@ -19,6 +19,7 @@ package com.stripe.dagon
 
 import java.io.Serializable
 import scala.util.control.TailCalls
+import scala.util.hashing.MurmurHash3
 /**
  * Expr[N, T] is an expression of a graph of container nodes N[_] with
  * result type N[T]. These expressions are like the Literal[T, N] graphs
@@ -35,9 +36,17 @@ import scala.util.control.TailCalls
  * Which seems to show a way to do currying, so we can handle general
  * arity
  */
-sealed trait Expr[N[_], T] extends Serializable {
+sealed trait Expr[N[_], T] extends Serializable { self: Product =>
   def evaluate(idToExp: HMap[Id, Expr[N, ?]]): N[T] =
     Expr.evaluate(idToExp, this)
+
+  /**
+   * Be eager and memoize the hashCode, but notice that Expr
+   * is not recursive on itself (only via the Id graph) so
+   * it does not have the DAG-exponential-equality-and-hashcode
+   * issue that Literal and other DAGs have
+   */
+  override val hashCode: Int = MurmurHash3.productHash(self)
 
   final def isVar: Boolean =
     this match {
@@ -61,6 +70,34 @@ object Expr {
       extends Expr[N, T3]
 
   case class Variadic[N[_], T1, T2](args: List[Id[T1]], fn: List[N[T1]] => N[T2]) extends Expr[N, T2]
+
+  /**
+   * What Ids does this expression depend on
+   */
+  def dependsOnIds[N[_], A](expr: Expr[N, A]): List[Id[_]] =
+    expr match {
+      case Const(_) => Nil
+      case Var(id) => id :: Nil
+      case Unary(id, _) => id :: Nil
+      case Binary(id0, id1, _) => id0 :: id1 :: Nil
+      case Variadic(ids, _) => ids
+    }
+
+  /**
+   * If a given node points to oldId, replace it with newId
+   */
+  def repoint[N[_], A, B](expr: Expr[N, A], oldId: Id[B], newId: Id[B]): Expr[N, A] =
+    expr match {
+      case Const(_) => expr
+      case Var(id) => Var(Id.maybeReplace(id, oldId, newId))
+      case Unary(id, fn) => Unary(Id.maybeReplace(id, oldId, newId), fn)
+      case Binary(id0, id1, fn) =>
+        Binary(
+          Id.maybeReplace(id0, oldId, newId),
+          Id.maybeReplace(id1, oldId, newId),
+          fn)
+      case Variadic(ids, fn) => Variadic(ids.map(Id.maybeReplace(_, oldId, newId)), fn)
+    }
 
   /**
    * Evaluate the given expression with the given mapping of Id to Expr.
@@ -109,8 +146,8 @@ object Expr {
       }
     })
 
-    def onStackGoSlow[A](lit: Expr[N, A], na: => N[A]): N[A] =
-      try na
+    def onStackGoSlow[A](lit: Expr[N, A]): N[A] =
+      try fast(lit)
       catch {
         case _: StackOverflowError =>
           slowAndSafe(lit).result
@@ -120,7 +157,7 @@ object Expr {
      * We *non-recursively* use either the fast approach or the slow approach
      */
     Memoize.functionK[Expr[N, ?], N](new Memoize.RecursiveK[Expr[N, ?], N] {
-      def toFunction[T] = { case (u, _) => onStackGoSlow(u, fast(u)) }
+      def toFunction[T] = { case (u, _) => onStackGoSlow(u) }
     })
   }
 
