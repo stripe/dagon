@@ -451,7 +451,7 @@ object DataFlowTest {
 class DataFlowTest extends FunSuite {
 
   implicit val generatorDrivenConfig =
-   PropertyCheckConfiguration(minSuccessful = 1000)
+   PropertyCheckConfiguration(minSuccessful = 5000)
    // PropertyCheckConfiguration(minSuccessful = 10)
 
   import DataFlowTest._

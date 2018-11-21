@@ -19,7 +19,6 @@ package com.stripe.dagon
 
 import java.io.Serializable
 import scala.util.control.TailCalls
-import scala.collection.immutable.SortedMap
 /**
  * Represents a directed acyclic graph (DAG).
  *
@@ -57,10 +56,6 @@ sealed abstract class Dag[N[_]] extends Serializable { self =>
   // Caches polymorphic functions of type Expr[N, T] => N[T]
   private val evalMemo = Expr.evaluateMemo(idToExp)
 
-
-  // Which id nodes depend on a given id
-  protected def idDepGraph: SortedMap[Id[_], Set[Id[_]]]
-
   /**
    * String representation of this DAG.
    */
@@ -70,19 +65,8 @@ sealed abstract class Dag[N[_]] extends Serializable { self =>
   /**
    * Which ids are reachable from the roots?
    */
-  def reachableIds: Set[Id[_]] = {
-
-    def neighbors(i: Id[_]): List[Id[_]] =
-      idToExp(i) match {
-        case Expr.Const(_) => Nil
-        case Expr.Var(id) => id :: Nil
-        case Expr.Unary(id, _) => id :: Nil
-        case Expr.Binary(id0, id1, _) => id0 :: id1 :: Nil
-        case Expr.Variadic(ids, _) => ids
-      }
-
-    Graphs.reflexiveTransitiveClosure(roots.toList)(neighbors _).toSet
-  }
+  def reachableIds: Set[Id[_]] =
+    rootsUp.map(_._2).toSet
 
   /**
    * Apply the given rule to the given dag until
@@ -153,7 +137,7 @@ sealed abstract class Dag[N[_]] extends Serializable { self =>
               // publicly, and the ids may be embedded in many
               // nodes. Instead we remap 'ids' to be a pointer
               // to 'newid'.
-              dag2.repointIds(n1, oldIds, idDepGraph, newId, n2)
+              dag2.repointIds(n1, oldIds, newId, n2)
             }
         }
       }
@@ -161,10 +145,8 @@ sealed abstract class Dag[N[_]] extends Serializable { self =>
 
     // We want to apply rules
     // in a deterministic order so they are reproducible
-    // idDepGraph is sorted by Id, so it is consistently ordered
-    idDepGraph
-      .iterator
-      .map { case (id, _) =>
+    rootsUp
+      .map { case (_, id) =>
         // use the method to fix the types below
         // if we don't use DagT here, scala thinks
         // it is unused even though we use it above
@@ -262,13 +244,11 @@ sealed abstract class Dag[N[_]] extends Serializable { self =>
   private def copy(
       id2Exp: HMap[Id, Expr[N, ?]] = self.idToExp,
       node2Literal: FunctionK[N, Literal[N, ?]] = self.toLiteral,
-      gcroots: Set[Id[_]] = self.roots,
-      idDeps: SortedMap[Id[_], Set[Id[_]]] = idDepGraph
+      gcroots: Set[Id[_]] = self.roots
   ): Dag[N] = new Dag[N] {
     def idToExp = id2Exp
     def roots = gcroots
     def toLiteral = node2Literal
-    def idDepGraph = idDeps
   }
 
   // Produce a new DAG that is equivalent to this one, but which frees
@@ -277,67 +257,25 @@ sealed abstract class Dag[N[_]] extends Serializable { self =>
   private def gc: Dag[N] = {
     val keepers = reachableIds
     if (idToExp.forallKeys(keepers)) this
-    else copy(
-      id2Exp = idToExp.filterKeys(keepers),
-      idDeps = idDepGraph.filterKeys(keepers))
+    else copy(id2Exp = idToExp.filterKeys(keepers))
   }
 
   /*
    * This updates the canonical Id for a given node and expression
    */
   protected def replaceId[A](newId: Id[A], expr: Expr[N, A], node: N[A]): Dag[N] =
-    copy(
-      id2Exp = idToExp.updated(newId, expr),
-      idDeps = idDepGraph.updated(newId, Set.empty))
+    copy(id2Exp = idToExp.updated(newId, expr))
 
   protected def repointIds[A](
     orig: N[A],
     oldIds: Iterable[Id[A]],
-    initChildren: Map[Id[_], Set[Id[_]]],
     newId: Id[A],
     newNode: N[A]): Dag[N] =
     if (oldIds.nonEmpty) {
-      val idExp1 = oldIds.foldLeft(idToExp) { (mapping, origId) =>
-        val m1 = mapping.updated(origId, Expr.Var[N, A](newId))
-        initChildren.get(origId) match {
-          case None => m1
-          case Some(children) =>
-            children.foldLeft(m1) { (m2, id) =>
-              def go[B](id: Id[B]): HMap[Id, Expr[N, ?]] = {
-                m2.get(id) match {
-                  case None => m1
-                  case Some(expr) =>
-                    val newExpr = Expr.repoint[N, B, A](expr, origId, newId)
-                    m2.updated(id, newExpr)
-                }
-              }
-              go(id)
-            }
-        }
+      val newIdToExp = oldIds.foldLeft(idToExp) { (mapping, origId) =>
+        mapping.updated(origId, Expr.Var[N, A](newId))
       }
-      // now update the idDepGraph, all the children of the oldIds, point to the newId
-      val oldChildren = oldIds.foldLeft(idDepGraph.getOrElse(newId, Set.empty)) { (down, id) =>
-        initChildren.get(id) match {
-          case None => down
-          case Some(s) => s.asInstanceOf[Set[Id[Any]]] ++ down
-        }
-      }
-      val idDep1 = idDepGraph.updated(newId, oldChildren)
-      // now remove all those children from each oldId
-      val idDep2 = oldIds.foldLeft(idDep1) { (idDepGraph, oldId) =>
-        idDepGraph.get(oldId) match {
-          case None => idDepGraph
-          case Some(g) =>
-            val toRem = initChildren.getOrElse(oldId, Set.empty[Id[_]])
-            val newg = g -- toRem
-            // we need to keep all the IDs in here, we can't remove empty sets
-            idDepGraph.updated(oldId, newg)
-        }
-      }
-      copy(
-        id2Exp = idExp1,
-        idDeps = idDep2
-        ).gc
+      copy(id2Exp = newIdToExp).gc
     }
     else this
 
@@ -356,17 +294,7 @@ sealed abstract class Dag[N[_]] extends Serializable { self =>
   private def addExp[T](exp: Expr[N, T]): (Dag[N], Id[T]) = {
     require(!exp.isVar)
     val nodeId = Id.next[T]()
-    val deps = dependsOnIds(exp)
-    val newIdDep = deps.foldLeft(idDepGraph) { (dg, to) =>
-      dg.get(to) match {
-        case None => dg.updated(to, Set(nodeId).asInstanceOf[Set[Id[_]]])
-        case Some(s) => dg.updated(to, s + nodeId)
-      }
-    }
-    (copy(
-      id2Exp = idToExp.updated(nodeId, exp),
-      idDeps = newIdDep.updated(nodeId, Set.empty)
-      ), nodeId)
+    (copy(id2Exp = idToExp.updated(nodeId, exp)), nodeId)
   }
 
   ////////////////////////////
@@ -547,37 +475,78 @@ sealed abstract class Dag[N[_]] extends Serializable { self =>
       idToExp.get(id).map(evalMemo(_))
     })
 
-  /**
-   * Return the number of nodes that depend on the
-   * given Id, TODO we might want to cache these.
-   * We need to garbage collect nodes that are
-   * no longer reachable from the root
-   */
-  private def fanOut(ids: Stream[Id[_]]): Int = {
-    val idSet = ids.toSet
-    val interiorFanNodes = idSet.flatMap(dependentsOfId(_)).map(evaluate(_))
-
-    val interiorFanOut = interiorFanNodes.size
-    val isroot = (roots & idSet).nonEmpty || ids.exists { i => isRoot(evaluate(i)) }
-    val tailFanOut = if (isroot) 1 else 0
-
-    interiorFanOut + tailFanOut
-  }
-
-  def fanOut(id: Id[_]): Int = fanOut(id #:: Stream.empty)
+  def fanOut(id: Id[_]): Int =
+    evaluateOption(id)
+      .map(fanOut)
+      .getOrElse(0)
 
   /**
    * Returns 0 if the node is absent, which is true
    * use .contains(n) to check for containment
    */
-  def fanOut(node: N[_]): Int =
-    fanOut(findAll(node))
+  def fanOut(node: N[_]): Int = {
+    val interiorFanOut = dependentsOf(node).size
+    val tailFanOut = if (isRoot(node)) 1 else 0
+    interiorFanOut + tailFanOut
+  }
 
   /**
    * Is this node a root of this graph
    */
   def isRoot(n: N[_]): Boolean =
     roots.iterator.exists(evaluatesTo(_, n))
+
+  // This is a roots up iterator giving the depth
+  // to the nearest root and in sorted by Id.serial
+  // within each depth
+  private def rootsUp: Iterator[(Int, Id[_])] = {
+    type State = (Int, Id[_], List[Id[_]], List[Id[_]], Set[Id[_]])
+
+    def sort(l: List[Id[_]]): List[Id[_]] =
+      l.asInstanceOf[List[Id[Any]]].sorted
+
+    def computeNext(s: List[Id[_]], seen: Set[Id[_]]): (List[Id[_]], Set[Id[_]]) =
+      s.foldLeft((List.empty[Id[_]], seen)) {
+        case ((l, s), id) =>
+          val newIds = Expr.dependsOnIds(idToExp(id)).filterNot(seen)
+          (newIds reverse_::: l, s ++ newIds)
+      }
+
+    def initState: Option[State] = {
+      val rootList = roots.toList
+      val (next, seen) = computeNext(rootList, rootList.toSet)
+      sort(rootList) match {
+        case Nil => None
+        case h :: tail => Some((0, h, tail, next, seen))
+      }
+    }
+
+    def nextState(current: State): Option[State] =
+      current match {
+        case (_, _, Nil, Nil, _) =>
+          None
+        case (depth, _, Nil, nextBatch, seen) =>
+          // nextBatch has at least one item, and sorting preserves that
+          val h :: tail = sort(nextBatch)
+          val (nextBatch1, seen1) = computeNext(nextBatch, seen)
+          Some((depth + 1, h, tail, nextBatch1, seen1))
+        case (d, _, h :: tail, next, seen) =>
+          Some((d, h, tail, next, seen))
+      }
+
+    new Iterator[(Int, Id[_])] {
+      var state: Option[State] = initState
+
+      def hasNext = state.isDefined
+      def next: (Int, Id[_]) =
+        state match {
+          case None => throw new NoSuchElementException("roots up has no more items")
+          case Some(s) =>
+            state = nextState(s)
+            (s._1, s._2)
+        }
+    }
+  }
 
   /**
    * Is this node in this DAG
@@ -604,36 +573,50 @@ sealed abstract class Dag[N[_]] extends Serializable { self =>
   }
 
   /**
+   * It is as expensive to compute this for the whole graph
+   * as it is to answer a single query
+   * we already cache the N pointed to, so this structure
+   * should be small
+   */
+  private lazy val dependencyMap: Map[N[_], Set[N[_]]] = {
+    def dependsOnSet(expr: Expr[N, _]): Set[N[_]] = expr match {
+      case Expr.Const(_) => Set.empty
+      case Expr.Var(id) => sys.error(s"logic error: Var($id)")
+      case Expr.Unary(id, _) => Set(evaluate(id))
+      case Expr.Binary(id0, id1, _) => Set(evaluate(id0), evaluate(id1))
+      case Expr.Variadic(ids, _) => ids.iterator.map(evaluate(_)).toSet
+    }
+
+    type SetConst[T] = (N[T], Set[N[_]])
+    val pointsToNode = new FunctionK[HMap[Id, Expr[N, ?]]#Pair, Lambda[x => Option[SetConst[x]]]] {
+      def toFunction[T] = {
+        case (id, expr) =>
+          // here are the nodes we depend on:
+
+          // We can ignore Vars here, since all vars point to a final expression
+          if (!expr.isVar) {
+            val depSet = dependsOnSet(expr)
+            Some((evalMemo(expr), depSet))
+          }
+          else None
+      }
+    }
+
+    idToExp.optionMap[SetConst](pointsToNode)
+      .flatMap { case (n, deps) =>
+        deps.map((_, n): (N[_], N[_]))
+      }
+      .groupBy(_._1)
+      .iterator
+      .map { case (k, vs) => (k, vs.iterator.map(_._2).toSet) }
+      .toMap
+  }
+
+  /**
    * list all the nodes that depend on the given node
    */
   def dependentsOf(node: N[_]): Set[N[_]] =
-    find(node) match {
-      case None => Set.empty
-      case Some(id) =>
-        dependentsOfId(id).iterator.flatMap { depId =>
-          evaluateOption(depId) match {
-            case None => Set.empty[N[_]]
-            case Some(n) => Set(n): Set[N[_]]
-          }
-        }
-        .toSet
-    }
-
-  private def dependentsOfId(id: Id[_]): Set[Id[_]] =
-    idDepGraph.get(id) match {
-      case None => Set.empty
-      case Some(deps) =>
-        // how many distinct nodes are here:
-        def pointsToId(i: Id[_]): Boolean =
-          idToExp.get(i) match {
-            case None => false
-            case Some(expr) =>
-              require(id != i, s"id: $id depends on itself")
-              dependsOnIds(expr).contains(id)
-          }
-
-        deps.filter(pointsToId _)
-    }
+    dependencyMap.getOrElse(node, Set.empty)
 
   private def evaluatesTo[A, B](id: Id[A], n: N[B]): Boolean = {
     val idN = evaluate(id)
@@ -676,12 +659,6 @@ object Dag {
       val idToExp = HMap.empty[Id, Expr[N, ?]]
       val toLiteral = n2l
       val roots = Set.empty[Id[_]]
-      // Using the reverse order here is important since we tend to expose the deepest
-      // nodes in the graph first. This allows rules to do more work internally and be
-      // MUCH faster if they can recursively apply themselves before making a modification
-      // to the graph
-      val idDepGraph = SortedMap.empty[Id[Any], Set[Id[_]]](Id.idOrdering[Any].reverse)
-        .asInstanceOf[SortedMap[Id[_], Set[Id[_]]]]
     }
 
   /**
