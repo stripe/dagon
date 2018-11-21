@@ -831,7 +831,7 @@ class DataFlowTest extends FunSuite {
       if (incs <= 0) f
       else incrementChain(f.map(_ + 1), incs - 1)
 
-    val incCount = 10000
+    val incCount = if (catalysts.Platform.isJvm) 10000 else 1000
 
     val incFlow = incrementChain(IteratorSource((0 to 100).iterator), incCount)
     val (dag, id) = Dag(incFlow, Flow.toLiteralTail)
