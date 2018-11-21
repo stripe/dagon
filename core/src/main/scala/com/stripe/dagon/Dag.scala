@@ -475,6 +475,12 @@ sealed abstract class Dag[N[_]] extends Serializable { self =>
       idToExp.get(id).map(evalMemo(_))
     })
 
+  /**
+   * Return the number of nodes that depend on the
+   * given Id, TODO we might want to cache these.
+   * We need to garbage collect nodes that are
+   * no longer reachable from the root
+   */
   def fanOut(id: Id[_]): Int =
     evaluateOption(id)
       .map(fanOut)

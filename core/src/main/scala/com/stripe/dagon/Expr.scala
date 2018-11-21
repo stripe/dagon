@@ -84,22 +84,6 @@ object Expr {
     }
 
   /**
-   * If a given node points to oldId, replace it with newId
-   */
-  def repoint[N[_], A, B](expr: Expr[N, A], oldId: Id[B], newId: Id[B]): Expr[N, A] =
-    expr match {
-      case Const(_) => expr
-      case Var(id) => Var(Id.maybeReplace(id, oldId, newId))
-      case Unary(id, fn) => Unary(Id.maybeReplace(id, oldId, newId), fn)
-      case Binary(id0, id1, fn) =>
-        Binary(
-          Id.maybeReplace(id0, oldId, newId),
-          Id.maybeReplace(id1, oldId, newId),
-          fn)
-      case Variadic(ids, fn) => Variadic(ids.map(Id.maybeReplace(_, oldId, newId)), fn)
-    }
-
-  /**
    * Evaluate the given expression with the given mapping of Id to Expr.
    */
   def evaluate[N[_], T](idToExp: HMap[Id, Expr[N, ?]], expr: Expr[N, T]): N[T] =
