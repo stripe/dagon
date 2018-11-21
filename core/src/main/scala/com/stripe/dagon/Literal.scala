@@ -74,13 +74,6 @@ object Literal {
       }
     })
 
-    def onStackGoSlow[A](lit: Literal[N, A], na: => N[A]): N[A] =
-      try na
-      catch {
-        case _: StackOverflowError =>
-          slowAndSafe(lit).result
-      }
-
     val fast = Memoize.functionK[Literal[N, ?], N](new Memoize.RecursiveK[Literal[N, ?], N] {
       def toFunction[T] = {
         case (Const(n), _) => n
@@ -90,11 +83,18 @@ object Literal {
       }
     })
 
+    def onStackGoSlow[A](lit: Literal[N, A]): N[A] =
+      try fast(lit)
+      catch {
+        case _: Throwable => //StackOverflowError should work, but not on scala.js
+          slowAndSafe(lit).result
+      }
+
     /*
      * We *non-recursively* use either the fast approach or the slow approach
      */
     Memoize.functionK[Literal[N, ?], N](new Memoize.RecursiveK[Literal[N, ?], N] {
-      def toFunction[T] = { case (u, _) => onStackGoSlow(u, fast(u)) }
+      def toFunction[T] = { case (u, _) => onStackGoSlow(u) }
     })
   }
 

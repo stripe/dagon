@@ -384,7 +384,7 @@ sealed abstract class Dag[N[_]] extends Serializable { self =>
     val lit = toLiteral(node)
     try ensureFast(lit)
     catch {
-      case _: StackOverflowError =>
+      case _: Throwable => //StackOverflowError should work, but not on scala.js
         ensureRec(lit).result
     }
   }

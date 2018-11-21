@@ -149,7 +149,7 @@ object Expr {
     def onStackGoSlow[A](lit: Expr[N, A]): N[A] =
       try fast(lit)
       catch {
-        case _: StackOverflowError =>
+        case _: Throwable => //StackOverflowError should work, but not on scala.js
           slowAndSafe(lit).result
       }
 
@@ -205,7 +205,7 @@ object Expr {
     def onStackGoSlow[A](expr: Expr[N, A]): Literal[N, A] =
       try fast(expr)
       catch {
-        case _: StackOverflowError =>
+        case _: Throwable => //StackOverflowError should work, but not on scala.js
           slowAndSafe(expr).result
       }
 
