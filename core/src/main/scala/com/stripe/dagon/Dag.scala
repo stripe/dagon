@@ -184,36 +184,91 @@ sealed abstract class Dag[N[_]] extends Serializable { self =>
     find(n).flatMap(depthOfId(_))
 
   private lazy val depth: Map[Id[_], Int] = {
-    sealed trait Rest
-    case class MaxInc(a: Id[_], b: Id[_]) extends Rest
-    case class Inc(of: Id[_]) extends Rest
-    case class Variadic(ids: List[Id[_]]) extends Rest
+    sealed trait Rest {
+      def dependsOn(id: Id[_]): Boolean
+    }
+    case class Same(asId: Id[_]) extends Rest {
+      def dependsOn(id: Id[_]) = id == asId
+    }
+    case class MaxInc(a: Id[_], b: Id[_]) extends Rest {
+      def dependsOn(id: Id[_]) = (id == a) || (id == b)
+    }
+    case class Inc(of: Id[_]) extends Rest {
+      def dependsOn(id: Id[_]) = id == of
+    }
+    case class Variadic(ids: List[Id[_]]) extends Rest {
+      def dependsOn(id: Id[_]) = ids.contains(id)
+    }
+
+    @annotation.tailrec
+    def lookup(state: Map[Id[_], Int], todo: List[(Id[_], Rest)], nextRound: List[(Id[_], Rest)]): Map[Id[_], Int] =
+      todo match {
+        case Nil =>
+          nextRound match {
+            case Nil => state
+            case repeat =>
+              val sortRepeat = repeat.sortWith { case ((i0, r0), (i1, r1)) =>
+                r1.dependsOn(i0) || (!r0.dependsOn(i1))
+              }
+              lookup(state, sortRepeat, Nil)
+          }
+        case (h@(id, Same(a))) :: rest =>
+          state.get(a) match {
+            case Some(depth) =>
+              val state1 = state.updated(id, depth)
+              lookup(state1, rest, nextRound)
+            case None =>
+              lookup(state, rest, h :: nextRound)
+          }
+        case (h@(id, Inc(a))) :: rest =>
+          state.get(a) match {
+            case Some(depth) =>
+              val state1 = state.updated(id, depth + 1)
+              lookup(state1, rest, nextRound)
+            case None =>
+              lookup(state, rest, h :: nextRound)
+          }
+        case (h@(id, MaxInc(a, b))) :: rest =>
+          (state.get(a), state.get(b)) match {
+            case (Some(da), Some(db)) =>
+              val depth = math.max(da, db) + 1
+              val state1 = state.updated(id, depth)
+              lookup(state1, rest, nextRound)
+            case _ =>
+              lookup(state, rest, h :: nextRound)
+          }
+        case (id, Variadic(Nil)) :: rest =>
+          val depth = 0
+          val state1 = state.updated(id, depth)
+          lookup(state1, rest, nextRound)
+        case (item@(id, Variadic(h :: t))) :: rest =>
+          // max can't throw here because ids is non-empty
+          def maxId(head: Id[_], tail: List[Id[_]], acc: Int): Option[Int] = {
+            state.get(head) match {
+              case None => None
+              case Some(d) =>
+                val newAcc = Math.max(acc, d)
+                tail match {
+                  case Nil => Some(newAcc)
+                  case h :: t => maxId(h, t, newAcc)
+                }
+            }
+
+          }
+          maxId(h, t, 0) match {
+            case Some(depth) =>
+              val state1 = state.updated(id, depth + 1)
+              lookup(state1, rest, nextRound)
+            case None =>
+             lookup(state, rest, item :: nextRound)
+          }
+      }
 
     @annotation.tailrec
     def loop(stack: List[Id[_]], seen: Set[Id[_]], state: Map[Id[_], Int], todo: List[(Id[_], Rest)]): Map[Id[_], Int] =
       stack match {
         case Nil =>
-          // finish the todos:
-          todo match {
-            case Nil => state
-            case (id, Inc(a)) :: rest =>
-              val depth = state(a) + 1
-              val state1 = state.updated(id, depth)
-              loop(Nil, seen, state1, rest)
-            case (id, MaxInc(a, b)) :: rest =>
-              val depth = math.max(state(a), state(b)) + 1
-              val state1 = state.updated(id, depth)
-              loop(Nil, seen, state1, rest)
-            case (id, Variadic(Nil)) :: rest =>
-              val depth = 0
-              val state1 = state.updated(id, depth)
-              loop(Nil, seen, state1, rest)
-            case (id, Variadic(ids)) :: rest =>
-              // max can't throw here because ids is non-empty
-              val depth = ids.iterator.map(state(_)).max + 1
-              val state1 = state.updated(id, depth)
-              loop(Nil, seen, state1, rest)
-          }
+          lookup(state, todo, Nil)
         case h :: tail if seen(h) => loop(tail, seen, state, todo)
         case h :: tail =>
           val seen1 = seen + h
@@ -223,7 +278,7 @@ sealed abstract class Dag[N[_]] extends Serializable { self =>
             case Some(Expr.Const(_)) =>
               loop(tail, seen1, state.updated(h, 0), todo)
             case Some(Expr.Var(id)) =>
-              loop(id :: tail, seen1, state, todo)
+              loop(id :: tail, seen1, state, (h, Same(id)) :: todo)
             case Some(Expr.Unary(id, _)) =>
               loop(id :: tail, seen1, state, (h, Inc(id)) :: todo)
             case Some(Expr.Binary(id0, id1, _)) =>
@@ -309,13 +364,6 @@ sealed abstract class Dag[N[_]] extends Serializable { self =>
       copy(id2Exp = newIdToExp).gc
     }
     else this
-
-  @annotation.tailrec
-  private def dependsOnIds[A](e: Expr[N, A]): List[Id[_]] =
-    e match {
-      case Expr.Var(id) => dependsOnIds(idToExp(id))
-      case _ => Expr.dependsOnIds(e)
-    }
 
   /**
    * This is only called by ensure

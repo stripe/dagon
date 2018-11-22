@@ -507,6 +507,7 @@ class DataFlowTest extends FunSuite {
       }
 
       optimizedDag.allNodes.foreach { n =>
+        assert(depGraph.depth(n) == optimizedDag.depthOf(n), s"$n inside\n$optimizedDag")
         assert(optimizedDag.fanOut(n) == fanOut(n), s"$n in $optimizedDag")
         assert(optimizedDag.isRoot(n) == (n == optF), s"$n should not be a root, only $optF is, $optimizedDag")
         assert(depGraph.isTail(n) == optimizedDag.isRoot(n), s"$n is seen as a root, but shouldn't, $optimizedDag")
@@ -666,6 +667,7 @@ class DataFlowTest extends FunSuite {
       val depGraph = SimpleDag[Flow[Any]](Flow.transitiveDeps(optimizedDag.evaluate(id)))(Flow.dependenciesOf _)
 
       optimizedDag.allNodes.foreach { n =>
+        assert(depGraph.depth(n) == optimizedDag.depthOf(n))
         assert(optimizedDag.dependentsOf(n) == depGraph.dependantsOf(n).fold(Set.empty[Flow[Any]])(_.toSet), s"node: $n")
         assert(optimizedDag.transitiveDependentsOf(n) ==
           depGraph.transitiveDependantsOf(n).toSet, s"node: $n")
@@ -835,6 +837,10 @@ class DataFlowTest extends FunSuite {
 
     val incFlow = incrementChain(IteratorSource((0 to 100).iterator), incCount)
     val (dag, id) = Dag(incFlow, Flow.toLiteralTail)
+
+    // make sure we can evaluate the id:
+    val node1 = dag.evaluate(id)
+    assert(node1 == incFlow)
 
     assert(dag.depthOfId(id) == Some((incCount)))
     assert(dag.depthOf(incFlow) == Some((incCount)))
