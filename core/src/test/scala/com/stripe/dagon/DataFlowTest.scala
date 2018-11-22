@@ -836,6 +836,9 @@ class DataFlowTest extends FunSuite {
     val incFlow = incrementChain(IteratorSource((0 to 100).iterator), incCount)
     val (dag, id) = Dag(incFlow, Flow.toLiteralTail)
 
+    assert(dag.depthOfId(id) == Some((incCount)))
+    assert(dag.depthOf(incFlow) == Some((incCount)))
+
     val optimizedDag = dag(allRules)
 
     optimizedDag.evaluate(id) match {

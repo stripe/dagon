@@ -178,32 +178,63 @@ sealed abstract class Dag[N[_]] extends Serializable { self =>
   }
 
   def depthOfId[A](i: Id[A]): Option[Int] =
-    depth(i)
+    depth.get(i)
 
   def depthOf[A](n: N[A]): Option[Int] =
     find(n).flatMap(depthOfId(_))
 
-  private val depth: Id[_] => Option[Int] =
-    Memoize.function[Id[_], Option[Int]] { (id, rec) =>
-      idToExp.get(id) match {
-        case None => None
-        case Some(Expr.Const(_)) => Some(0)
-        case Some(Expr.Var(id)) => rec(id)
-        case Some(Expr.Unary(id, _)) => rec(id).map(_ + 1)
-        case Some(Expr.Binary(id0, id1, _)) =>
-          for {
-            d0 <- rec(id0)
-            d1 <- rec(id1)
-          } yield math.max(d0, d1) + 1
-        case Some(Expr.Variadic(ids, _)) =>
-          ids.foldLeft(Option(0)) { (optD, id) =>
-            for {
-              d <- optD
-              d1 <- rec(id)
-            } yield math.max(d, d1) + 1
+  private lazy val depth: Map[Id[_], Int] = {
+    sealed trait Rest
+    case class MaxInc(a: Id[_], b: Id[_]) extends Rest
+    case class Inc(of: Id[_]) extends Rest
+    case class Variadic(ids: List[Id[_]]) extends Rest
+
+    @annotation.tailrec
+    def loop(stack: List[Id[_]], seen: Set[Id[_]], state: Map[Id[_], Int], todo: List[(Id[_], Rest)]): Map[Id[_], Int] =
+      stack match {
+        case Nil =>
+          // finish the todos:
+          todo match {
+            case Nil => state
+            case (id, Inc(a)) :: rest =>
+              val depth = state(a) + 1
+              val state1 = state.updated(id, depth)
+              loop(Nil, seen, state1, rest)
+            case (id, MaxInc(a, b)) :: rest =>
+              val depth = math.max(state(a), state(b)) + 1
+              val state1 = state.updated(id, depth)
+              loop(Nil, seen, state1, rest)
+            case (id, Variadic(Nil)) :: rest =>
+              val depth = 0
+              val state1 = state.updated(id, depth)
+              loop(Nil, seen, state1, rest)
+            case (id, Variadic(ids)) :: rest =>
+              // max can't throw here because ids is non-empty
+              val depth = ids.iterator.map(state(_)).max + 1
+              val state1 = state.updated(id, depth)
+              loop(Nil, seen, state1, rest)
+          }
+        case h :: tail if seen(h) => loop(tail, seen, state, todo)
+        case h :: tail =>
+          val seen1 = seen + h
+          idToExp.get(h) match {
+            case None =>
+              loop(tail, seen1, state, todo)
+            case Some(Expr.Const(_)) =>
+              loop(tail, seen1, state.updated(h, 0), todo)
+            case Some(Expr.Var(id)) =>
+              loop(id :: tail, seen1, state, todo)
+            case Some(Expr.Unary(id, _)) =>
+              loop(id :: tail, seen1, state, (h, Inc(id)) :: todo)
+            case Some(Expr.Binary(id0, id1, _)) =>
+              loop(id0 :: id1 :: tail, seen1, state, (h, MaxInc(id0, id1)) :: todo)
+            case Some(Expr.Variadic(ids, _)) =>
+              loop(ids reverse_::: tail, seen1, state, (h, Variadic(ids)) :: todo)
           }
       }
-    }
+
+    loop(roots.toList, Set.empty, Map.empty, Nil)
+  }
 
   /**
    * Find all the nodes currently in the graph
