@@ -434,7 +434,6 @@ sealed abstract class Dag[N[_]] extends Serializable { self =>
     val f = new FunctionK[HMap[Id, Expr[N, ?]]#Pair, Lambda[x => Option[Id[x]]]] {
       def toFunction[T1] = {
         case (thisId, expr) =>
-          val evalNode = evalMemo(expr)
           if (node == evalMemo(expr)) Some(thisId) else None
       }
     }
