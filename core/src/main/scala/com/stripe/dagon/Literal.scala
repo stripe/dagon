@@ -2,6 +2,7 @@ package com.stripe.dagon
 
 import java.io.Serializable
 import scala.util.hashing.MurmurHash3
+import scala.util.control.TailCalls
 
 /**
  * This represents literal expressions (no variable redirection)
@@ -51,8 +52,29 @@ object Literal {
    *
    * Each call to this creates a new internal memo.
    */
-  def evaluateMemo[N[_]]: FunctionK[Literal[N, ?], N] =
-    Memoize.functionK[Literal[N, ?], N](new Memoize.RecursiveK[Literal[N, ?], N] {
+  def evaluateMemo[N[_]]: FunctionK[Literal[N, ?], N] = {
+    import TailCalls._
+
+    val slowAndSafe = Memoize.functionKTailRec[Literal[N, ?], N](new Memoize.RecursiveKTailRec[Literal[N, ?], N] {
+      def toFunction[T] = {
+        case (Const(n), _) => done(n)
+        case (Unary(n, fn), rec) => rec(n).map(fn)
+        case (Binary(n1, n2, fn), rec) =>
+          for {
+            nn1 <- rec(n1)
+            nn2 <- rec(n2)
+          } yield fn(nn1, nn2)
+        case (Variadic(args, fn), rec) =>
+          def loop[A](as: List[Literal[N, A]]): TailRec[List[N[A]]] =
+            as match {
+              case Nil => done(Nil)
+              case h :: t => loop(t).flatMap(tt => rec(h).map(_ :: tt))
+            }
+          loop(args).map(fn)
+      }
+    })
+
+    val fast = Memoize.functionK[Literal[N, ?], N](new Memoize.RecursiveK[Literal[N, ?], N] {
       def toFunction[T] = {
         case (Const(n), _) => n
         case (Unary(n, fn), rec) => fn(rec(n))
@@ -60,6 +82,21 @@ object Literal {
         case (Variadic(args, fn), rec) => fn(args.map(rec(_)))
       }
     })
+
+    def onStackGoSlow[A](lit: Literal[N, A]): N[A] =
+      try fast(lit)
+      catch {
+        case _: Throwable => //StackOverflowError should work, but not on scala.js
+          slowAndSafe(lit).result
+      }
+
+    /*
+     * We *non-recursively* use either the fast approach or the slow approach
+     */
+    Memoize.functionK[Literal[N, ?], N](new Memoize.RecursiveK[Literal[N, ?], N] {
+      def toFunction[T] = { case (u, _) => onStackGoSlow(u) }
+    })
+  }
 
   /**
    * Note that this is a def, not a val, so the cache only lives
