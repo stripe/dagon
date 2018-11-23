@@ -140,6 +140,9 @@ lazy val core = crossProject
   .settings(moduleName := "dagon-core")
   .settings(dagonSettings: _*)
   .settings(mimaPreviousArtifacts := Set(previousArtifact("core")))
+  .settings(libraryDependencies ++= Seq(
+    "org.typelevel" %%% "catalysts-platform" % "0.8" % "test"
+  ))
   .disablePlugins(JmhPlugin)
   .jsSettings(commonJsSettings: _*)
   .jsSettings(coverageEnabled := false)

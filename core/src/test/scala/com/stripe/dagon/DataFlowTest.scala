@@ -3,9 +3,10 @@ package com.stripe.dagon
 import org.scalatest.FunSuite
 import org.scalacheck.{Arbitrary, Cogen, Gen}
 import org.scalatest.prop.GeneratorDrivenPropertyChecks._
+import scala.util.control.TailCalls
 
 object DataFlowTest {
-  sealed trait Flow[+T] {
+  sealed abstract class Flow[+T] extends Product {
     def filter(fn: T => Boolean): Flow[T] =
       optionMap(Flow.FilterFn(fn))
 
@@ -23,6 +24,66 @@ object DataFlowTest {
 
     def tagged[A](a: A): Flow[T] =
       Flow.Tagged(this, a)
+
+    /*
+     * For large dags you need to eagerly cache hashcode
+     * or you will stack overflow
+     */
+    override val hashCode = scala.util.hashing.MurmurHash3.productHash(this)
+
+    /*
+     * You need a custom equals to avoid stack overflow
+     */
+    override def equals(that: Any) = {
+      type Pair = (Flow[Any], Flow[Any])
+      import Flow._
+      @annotation.tailrec
+      def loop(pairs: List[Pair]): Boolean =
+        pairs match {
+          case Nil => true
+          case h :: tail =>
+            val (h1, h2) = h
+            if (h1 eq h2) loop(tail)
+            else
+            h match {
+              case (IteratorSource(as), IteratorSource(bs)) => (as == bs) && loop(tail)
+              case (OptionMapped(f1, fn1), OptionMapped(f2, fn2)) => (fn1 == fn2) && {
+                val pair = (f1, f2)
+                loop(pair :: tail)
+              }
+              case (ConcatMapped(f1, fn1), ConcatMapped(f2, fn2)) => (fn1 == fn2) && {
+                val pair = (f1, f2)
+                loop(pair :: tail)
+              }
+              case (Merge(m1, m2), Merge(m3, m4)) =>
+                val pair1 = (m1, m3)
+                val pair2 = (m2, m4)
+                loop(pair1 :: pair2 :: tail)
+              case (Merged(it0), Merged(it1)) =>
+                (it0.size == it1.size) && {
+                  val pairs = it0.zip(it1)
+                  loop(pairs ::: tail)
+                }
+              case (Fork(f1), Fork(f2)) =>
+                val pair = (f1, f2)
+                loop(pair :: tail)
+              case (Tagged(f1, a1), Tagged(f2, a2)) =>
+                a1 == a2 && {
+                  val pair = (f1, f2)
+                  loop(pair :: tail)
+                }
+              case (_, _) => false
+            }
+        }
+
+      that match {
+        case f: Flow[_] =>
+          // since hashCode is computed, let's use this first
+          // after this, we are dealing with collisions and equality
+          (this eq f) || ((this.hashCode == f.hashCode) && loop((this, f) :: Nil))
+        case _ => false
+      }
+    }
   }
 
   object Flow {
@@ -65,6 +126,38 @@ object DataFlowTest {
         }
       })
 
+    def toLiteralTail: FunctionK[Flow, Literal[Flow, ?]] =
+      FunctionK.andThen[Flow, Lambda[x => TailCalls.TailRec[Literal[Flow, x]]], Literal[Flow, ?]](
+        Memoize.functionKTailRec[Flow, Literal[Flow, ?]](new Memoize.RecursiveKTailRec[Flow, Literal[Flow, ?]] {
+          import Literal._
+
+          def toFunction[T] = {
+            case (it@IteratorSource(_), _) => TailCalls.done(Const(it))
+            case (o: OptionMapped[s, T], rec) => rec[s](o.input).map(Unary(_, { f: Flow[s] => OptionMapped(f, o.fn) }))
+            case (c: ConcatMapped[s, T], rec) => rec[s](c.input).map(Unary(_, { f: Flow[s] => ConcatMapped(f, c.fn) }))
+            case (t: Tagged[a, s], rec) => rec[s](t.input).map(Unary(_, { f: Flow[s] => Tagged(f, t.tag) }))
+            case (f: Fork[s], rec) => rec[s](f.input).map(Unary(_, { f: Flow[s] => Fork(f) }))
+            case (m: Merge[s], rec) =>
+              for {
+                l <- rec(m.left)
+                r <- rec(m.right)
+              } yield Binary(l, r, { (l: Flow[s], r: Flow[s]) => Merge(l, r) })
+            case (m: Merged[s], rec) =>
+              def loop(ins: List[Flow[s]]): TailCalls.TailRec[List[Literal[Flow, s]]] =
+                ins match {
+                  case Nil => TailCalls.done(Nil)
+                  case h :: tail =>
+                    for {
+                      lh <- rec(h)
+                      lt <- loop(ins)
+                    } yield lh :: lt
+                }
+
+                loop(m.inputs).map(Variadic(_, { fs: List[Flow[s]] => Merged(fs) }))
+          }
+        }), new FunctionK[Lambda[x => TailCalls.TailRec[Literal[Flow, x]]], Literal[Flow, ?]] {
+          def toFunction[T] = _.result
+        })
     /*
      * use case class functions to preserve equality where possible
      */
@@ -77,7 +170,30 @@ object DataFlowTest {
     }
 
     private case class ComposedOM[A, B, C](fn1: A => Option[B], fn2: B => Option[C]) extends Function1[A, Option[C]] {
-      def apply(a: A): Option[C] = fn1(a).flatMap(fn2)
+      def apply(a: A): Option[C] = {
+        // TODO this would be 2x faster if we do it repeatedly and we right associate once in
+        // advance
+        // this type checks, but can't be tailrec
+        //def loop[A1, B1](start: A1, first: A1 => Option[B1], next: B1 => Option[C]): Option[C] =
+        @annotation.tailrec
+        def loop(start: Any, first: Any => Option[Any], next: Any => Option[C]): Option[C] =
+          first match {
+            case ComposedOM(f1, f2) =>
+              loop(start, f1, ComposedOM(f2, next))
+            case notComp =>
+              notComp(start) match {
+                case None => None
+                case Some(b) =>
+                  next match {
+                    case ComposedOM(f1, f2) =>
+                      loop(b, f1, f2)
+                    case notComp => notComp(b)
+                  }
+              }
+          }
+
+        loop(a, fn1.asInstanceOf[Any => Option[Any]], fn2.asInstanceOf[Any => Option[C]])
+      }
     }
     private case class ComposedCM[A, B, C](fn1: A => TraversableOnce[B], fn2: B => TraversableOnce[C]) extends Function1[A, TraversableOnce[C]] {
       def apply(a: A): TraversableOnce[C] = fn1(a).flatMap(fn2)
@@ -127,10 +243,25 @@ object DataFlowTest {
      * f.optionMap(fn1).optionMap(fn2) == f.optionMap { t => fn1(t).flatMap(fn2) }
      * we use object to get good toString for debugging
      */
-    object composeOptionMapped extends PartialRule[Flow] {
-      def applyWhere[T](on: Dag[Flow]) = {
-        case (OptionMapped(inner @ OptionMapped(s, fn0), fn1)) if on.fanOut(inner) == 1 =>
-          OptionMapped(s, ComposedOM(fn0, fn1))
+    object composeOptionMapped extends Rule[Flow] {
+      // This recursively scoops up as much as we can into one OptionMapped
+      // the Any here is to make tailrec work, which until 2.13 does not allow
+      // the types to change on the calls
+      @annotation.tailrec
+      private def compose[B](dag: Dag[Flow], flow: Flow[Any], fn: Any => Option[B], diff: Boolean): (Boolean, OptionMapped[_, B]) =
+        flow match {
+          case OptionMapped(inner, fn1) if dag.hasSingleDependent(flow) =>
+            compose(dag, inner, ComposedOM(fn1, fn), true)
+          case _ => (diff, OptionMapped(flow, fn))
+        }
+
+
+      def apply[T](on: Dag[Flow]) = {
+        case OptionMapped(inner, fn) =>
+          val (changed, res) = compose(on, inner, fn, false)
+          if (changed) Some(res)
+          else None
+        case _ => None
       }
     }
 
@@ -139,7 +270,7 @@ object DataFlowTest {
      */
     object composeConcatMap extends PartialRule[Flow] {
       def applyWhere[T](on: Dag[Flow]) = {
-        case (ConcatMapped(inner @ ConcatMapped(s, fn0), fn1)) if on.fanOut(inner) == 1 =>
+        case (ConcatMapped(inner @ ConcatMapped(s, fn0), fn1)) if on.hasSingleDependent(inner) =>
           ConcatMapped(s, ComposedCM(fn0, fn1))
       }
     }
@@ -150,9 +281,9 @@ object DataFlowTest {
      */
     object mergePullDown extends PartialRule[Flow] {
       def applyWhere[T](on: Dag[Flow]) = {
-        case (ConcatMapped(merge @ Merge(a, b), fn)) if on.fanOut(merge) == 1 =>
+        case (ConcatMapped(merge @ Merge(a, b), fn)) if on.hasSingleDependent(merge) =>
           a.concatMap(fn) ++ b.concatMap(fn)
-        case (OptionMapped(merge @ Merge(a, b), fn)) if on.fanOut(merge) == 1 =>
+        case (OptionMapped(merge @ Merge(a, b), fn)) if on.hasSingleDependent(merge) =>
           a.optionMap(fn) ++ b.optionMap(fn)
       }
     }
@@ -175,7 +306,7 @@ object DataFlowTest {
         @annotation.tailrec
         def flatten(f: Flow[T], toCheck: List[Flow[T]], acc: List[Flow[T]]): List[Flow[T]] =
           f match {
-            case m@Merge(a, b) if on.fanOut(m) == 1 =>
+            case m@Merge(a, b) if on.hasSingleDependent(m) =>
               // on the inner merges, we only destroy them if they have no fanout
               flatten(a, b :: toCheck, acc)
             case noSplit =>
@@ -209,21 +340,21 @@ object DataFlowTest {
      */
     object evalSource extends PartialRule[Flow] {
       def applyWhere[T](on: Dag[Flow]) = {
-        case OptionMapped(src @ IteratorSource(it), fn) if on.fanOut(src) == 1 =>
+        case OptionMapped(src @ IteratorSource(it), fn) if on.hasSingleDependent(src) =>
           IteratorSource(it.flatMap(fn(_).toIterator))
-        case ConcatMapped(src @ IteratorSource(it), fn) if on.fanOut(src) == 1 =>
+        case ConcatMapped(src @ IteratorSource(it), fn) if on.hasSingleDependent(src) =>
           IteratorSource(it.flatMap(fn))
-        case Merge(src1 @ IteratorSource(it1), src2 @ IteratorSource(it2)) if it1 != it2 && on.fanOut(src1) == 1 && on.fanOut(src2) == 1 =>
+        case Merge(src1 @ IteratorSource(it1), src2 @ IteratorSource(it2)) if it1 != it2 && on.hasSingleDependent(src1) && on.hasSingleDependent(src2) =>
           IteratorSource(it1 ++ it2)
-        case Merge(src1 @ IteratorSource(it1), src2 @ IteratorSource(it2)) if it1 == it2 && on.fanOut(src1) == 1 && on.fanOut(src2) == 1 =>
+        case Merge(src1 @ IteratorSource(it1), src2 @ IteratorSource(it2)) if it1 == it2 && on.hasSingleDependent(src1) && on.hasSingleDependent(src2) =>
           // we need to materialize the left
           val left = it1.toStream
           IteratorSource((left #::: left).iterator)
         case Merged(Nil) => IteratorSource(Iterator.empty)
         case Merged(single :: Nil) => single
-        case Merged((src1 @ IteratorSource(it1)) :: (src2 @ IteratorSource(it2)) :: tail) if it1 != it2 && on.fanOut(src1) == 1 && on.fanOut(src2) == 1 =>
+        case Merged((src1 @ IteratorSource(it1)) :: (src2 @ IteratorSource(it2)) :: tail) if it1 != it2 && on.hasSingleDependent(src1) && on.hasSingleDependent(src2) =>
           Merged(IteratorSource(it1 ++ it2) :: tail)
-        case Merged((src1 @ IteratorSource(it1)) :: (src2 @ IteratorSource(it2)) :: tail) if it1 == it2 && on.fanOut(src1) == 1 && on.fanOut(src2) == 1 =>
+        case Merged((src1 @ IteratorSource(it1)) :: (src2 @ IteratorSource(it2)) :: tail) if it1 == it2 && on.hasSingleDependent(src1) && on.hasSingleDependent(src2) =>
           // we need to materialize the left
           val left = it1.toStream
           Merged(IteratorSource((left #::: left).iterator) :: tail)
@@ -320,7 +451,7 @@ object DataFlowTest {
 class DataFlowTest extends FunSuite {
 
   implicit val generatorDrivenConfig =
-   PropertyCheckConfiguration(minSuccessful = 1000)
+   PropertyCheckConfiguration(minSuccessful = 5000)
    // PropertyCheckConfiguration(minSuccessful = 10)
 
   import DataFlowTest._
@@ -376,7 +507,8 @@ class DataFlowTest extends FunSuite {
       }
 
       optimizedDag.allNodes.foreach { n =>
-        assert(optimizedDag.fanOut(n) == fanOut(n))
+        assert(depGraph.depth(n) == optimizedDag.depthOf(n), s"$n inside\n$optimizedDag")
+        assert(optimizedDag.fanOut(n) == fanOut(n), s"$n in $optimizedDag")
         assert(optimizedDag.isRoot(n) == (n == optF), s"$n should not be a root, only $optF is, $optimizedDag")
         assert(depGraph.isTail(n) == optimizedDag.isRoot(n), s"$n is seen as a root, but shouldn't, $optimizedDag")
       }
@@ -535,9 +667,10 @@ class DataFlowTest extends FunSuite {
       val depGraph = SimpleDag[Flow[Any]](Flow.transitiveDeps(optimizedDag.evaluate(id)))(Flow.dependenciesOf _)
 
       optimizedDag.allNodes.foreach { n =>
-        assert(optimizedDag.dependentsOf(n) == depGraph.dependantsOf(n).fold(Set.empty[Flow[Any]])(_.toSet))
+        assert(depGraph.depth(n) == optimizedDag.depthOf(n))
+        assert(optimizedDag.dependentsOf(n) == depGraph.dependantsOf(n).fold(Set.empty[Flow[Any]])(_.toSet), s"node: $n")
         assert(optimizedDag.transitiveDependentsOf(n) ==
-          depGraph.transitiveDependantsOf(n).toSet)
+          depGraph.transitiveDependantsOf(n).toSet, s"node: $n")
       }
     }
   }
@@ -575,6 +708,26 @@ class DataFlowTest extends FunSuite {
           assert(dag.dependentsOf(n).size <= 1)
         }
     }
+  }
+
+  test("findAll works as expected") {
+    def law(f: Flow[Int], rule: Rule[Flow], max: Int, check: List[Flow[Int]]) = {
+      val (dag, _) = Dag(f, Flow.toLiteral)
+
+      val optimizedDag = dag.applyMax(rule, max)
+
+      optimizedDag.allNodes.iterator.foreach { n =>
+        assert(optimizedDag.findAll(n).nonEmpty, s"findAll: $n $optimizedDag")
+      }
+      check.filterNot(optimizedDag.allNodes).foreach { n =>
+        assert(optimizedDag.findAll(n).isEmpty, s"findAll: $n $optimizedDag")
+      }
+    }
+
+    law(Flow.IteratorSource(Iterator(1, 2, 3)), Flow.allRules, 1, Nil)
+    law(Flow.IteratorSource(Iterator(1, 2, 3)).map(_ * 2), Flow.allRules, 1, Nil)
+    law(Flow.IteratorSource(Iterator(1, 2, 3)).map(_ * 2).tagged(100), Flow.allRules, 1, Nil)
+    forAll(law _)
   }
 
   test("contains(n) is the same as allNodes.contains(n)") {
@@ -671,4 +824,35 @@ class DataFlowTest extends FunSuite {
     val d4 = d3.apply(Flow.explicitFork)
     assert(d4.evaluate(id1) == OptionMapped(Fork(src), fn1))
   }
+
+  test("test a giant graph") {
+    import Flow._
+
+    @annotation.tailrec
+    def incrementChain(f: Flow[Int], incs: Int): Flow[Int] =
+      if (incs <= 0) f
+      else incrementChain(f.map(_ + 1), incs - 1)
+
+    val incCount = if (catalysts.Platform.isJvm) 10000 else 1000
+
+    val incFlow = incrementChain(IteratorSource((0 to 100).iterator), incCount)
+    val (dag, id) = Dag(incFlow, Flow.toLiteralTail)
+
+    // make sure we can evaluate the id:
+    val node1 = dag.evaluate(id)
+    assert(node1 == incFlow)
+
+    assert(dag.depthOfId(id) == Some((incCount)))
+    assert(dag.depthOf(incFlow) == Some((incCount)))
+
+    val optimizedDag = dag(allRules)
+
+    optimizedDag.evaluate(id) match {
+      case IteratorSource(it)=>
+        assert(it.toList == (0 to 100).map(_ + incCount).toList)
+      case other =>
+        fail(s"expected to be optimized: $other")
+    }
+  }
 }
+

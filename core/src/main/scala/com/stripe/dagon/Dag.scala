@@ -18,7 +18,7 @@
 package com.stripe.dagon
 
 import java.io.Serializable
-
+import scala.util.control.TailCalls
 /**
  * Represents a directed acyclic graph (DAG).
  *
@@ -49,33 +49,12 @@ sealed abstract class Dag[N[_]] extends Serializable { self =>
   private val idToN: HCache[Id, Lambda[t => Option[N[t]]]] =
     HCache.empty[Id, Lambda[t => Option[N[t]]]]
 
-  // Caches polymorphic functions of type N[T] => Option[Id[T]]
-  private val nodeToId: HCache[N, Lambda[t => Option[Id[t]]]] =
-    HCache.empty[N, Lambda[t => Option[Id[t]]]]
+  // Caches polymorphic functions of type Literal[N, T] => Option[Id[T]]
+  private val litToId: HCache[Literal[N, ?], Lambda[t => Option[Id[t]]]] =
+    HCache.empty[Literal[N, ?], Lambda[t => Option[Id[t]]]]
 
   // Caches polymorphic functions of type Expr[N, T] => N[T]
   private val evalMemo = Expr.evaluateMemo(idToExp)
-
-  // Convenient method to produce new, modified DAGs based on this
-  // one.
-  private def copy(
-      id2Exp: HMap[Id, Expr[N, ?]] = self.idToExp,
-      node2Literal: FunctionK[N, Literal[N, ?]] = self.toLiteral,
-      gcroots: Set[Id[_]] = self.roots
-  ): Dag[N] = new Dag[N] {
-    def idToExp = id2Exp
-    def roots = gcroots
-    def toLiteral = node2Literal
-  }
-
-  // Produce a new DAG that is equivalent to this one, but which frees
-  // orphaned nodes and other internal state which may no longer be
-  // needed.
-  private def gc: Dag[N] = {
-    val keepers = reachableIds
-    if (idToExp.forallKeys(keepers)) this
-    else copy(id2Exp = idToExp.filterKeys(keepers))
-  }
 
   /**
    * String representation of this DAG.
@@ -84,29 +63,10 @@ sealed abstract class Dag[N[_]] extends Serializable { self =>
     s"Dag(idToExp = $idToExp, roots = $roots)"
 
   /**
-   * Add a GC root, or tail in the DAG, that can never be deleted.
-   */
-  def addRoot[T](node: N[T]): (Dag[N], Id[T]) = {
-    val (dag, id) = ensure(node)
-    (dag.copy(gcroots = dag.roots + id), id)
-  }
-
-  /**
    * Which ids are reachable from the roots?
    */
-  def reachableIds: Set[Id[_]] = {
-
-    def neighbors(i: Id[_]): List[Id[_]] =
-      idToExp(i) match {
-        case Expr.Const(_) => Nil
-        case Expr.Var(id) => id :: Nil
-        case Expr.Unary(id, _) => id :: Nil
-        case Expr.Binary(id0, id1, _) => id0 :: id1 :: Nil
-        case Expr.Variadic(ids, _) => ids
-      }
-
-    Graphs.reflexiveTransitiveClosure(roots.toList)(neighbors _).toSet
-  }
+  def reachableIds: Set[Id[_]] =
+    rootsUp.map(_._2).toSet
 
   /**
    * Apply the given rule to the given dag until
@@ -169,17 +129,15 @@ sealed abstract class Dag[N[_]] extends Serializable { self =>
               // new id. To fix this, re-reassign
               // n1 to a new id, since that new id won't be
               // updated to point to itself, we prevent a loop
-              val dag1 = copy(id2Exp = idToExp.updated(Id.next(), expr))
+              val newIdN1 = Id.next[U]()
+              val dag1 = replaceId(newIdN1, expr, n1)
               val (dag2, newId) = dag1.ensure(n2)
 
               // We can't delete Ids which may have been shared
               // publicly, and the ids may be embedded in many
               // nodes. Instead we remap 'ids' to be a pointer
               // to 'newid'.
-              val newIdToExp = oldIds.foldLeft(dag2.idToExp) { (mapping, origId) =>
-                mapping.updated(origId, Expr.Var[N, U](newId))
-              }
-              dag2.copy(id2Exp = newIdToExp).gc
+              dag2.repointIds(n1, oldIds, newId, n2)
             }
         }
       }
@@ -187,12 +145,8 @@ sealed abstract class Dag[N[_]] extends Serializable { self =>
 
     // We want to apply rules
     // in a deterministic order so they are reproducible
-    val ids = idToExp.keySet.toArray.asInstanceOf[Array[Id[Any]]]
-    scala.util.Sorting.quickSort(ids)
-
-    ids
-      .iterator
-      .map { id =>
+    rootsUp
+      .map { case (_, id) =>
         // use the method to fix the types below
         // if we don't use DagT here, scala thinks
         // it is unused even though we use it above
@@ -224,32 +178,118 @@ sealed abstract class Dag[N[_]] extends Serializable { self =>
   }
 
   def depthOfId[A](i: Id[A]): Option[Int] =
-    depth(i)
+    depth.get(i)
 
   def depthOf[A](n: N[A]): Option[Int] =
     find(n).flatMap(depthOfId(_))
 
-  private val depth: Id[_] => Option[Int] =
-    Memoize.function[Id[_], Option[Int]] { (id, rec) =>
-      idToExp.get(id) match {
-        case None => None
-        case Some(Expr.Const(_)) => Some(0)
-        case Some(Expr.Var(id)) => rec(id)
-        case Some(Expr.Unary(id, _)) => rec(id).map(_ + 1)
-        case Some(Expr.Binary(id0, id1, _)) =>
-          for {
-            d0 <- rec(id0)
-            d1 <- rec(id1)
-          } yield math.max(d0, d1) + 1
-        case Some(Expr.Variadic(ids, _)) =>
-          ids.foldLeft(Option(0)) { (optD, id) =>
-            for {
-              d <- optD
-              d1 <- rec(id)
-            } yield math.max(d, d1) + 1
+  private lazy val depth: Map[Id[_], Int] = {
+    sealed trait Rest {
+      def dependsOn(id: Id[_]): Boolean
+    }
+    case class Same(asId: Id[_]) extends Rest {
+      def dependsOn(id: Id[_]) = id == asId
+    }
+    case class MaxInc(a: Id[_], b: Id[_]) extends Rest {
+      def dependsOn(id: Id[_]) = (id == a) || (id == b)
+    }
+    case class Inc(of: Id[_]) extends Rest {
+      def dependsOn(id: Id[_]) = id == of
+    }
+    case class Variadic(ids: List[Id[_]]) extends Rest {
+      def dependsOn(id: Id[_]) = ids.contains(id)
+    }
+
+    @annotation.tailrec
+    def lookup(state: Map[Id[_], Int], todo: List[(Id[_], Rest)], nextRound: List[(Id[_], Rest)]): Map[Id[_], Int] =
+      todo match {
+        case Nil =>
+          nextRound match {
+            case Nil => state
+            case repeat =>
+              val sortRepeat = repeat.sortWith { case ((i0, r0), (i1, r1)) =>
+                r1.dependsOn(i0) || (!r0.dependsOn(i1))
+              }
+              lookup(state, sortRepeat, Nil)
+          }
+        case (h@(id, Same(a))) :: rest =>
+          state.get(a) match {
+            case Some(depth) =>
+              val state1 = state.updated(id, depth)
+              lookup(state1, rest, nextRound)
+            case None =>
+              lookup(state, rest, h :: nextRound)
+          }
+        case (h@(id, Inc(a))) :: rest =>
+          state.get(a) match {
+            case Some(depth) =>
+              val state1 = state.updated(id, depth + 1)
+              lookup(state1, rest, nextRound)
+            case None =>
+              lookup(state, rest, h :: nextRound)
+          }
+        case (h@(id, MaxInc(a, b))) :: rest =>
+          (state.get(a), state.get(b)) match {
+            case (Some(da), Some(db)) =>
+              val depth = math.max(da, db) + 1
+              val state1 = state.updated(id, depth)
+              lookup(state1, rest, nextRound)
+            case _ =>
+              lookup(state, rest, h :: nextRound)
+          }
+        case (id, Variadic(Nil)) :: rest =>
+          val depth = 0
+          val state1 = state.updated(id, depth)
+          lookup(state1, rest, nextRound)
+        case (item@(id, Variadic(h :: t))) :: rest =>
+          // max can't throw here because ids is non-empty
+          def maxId(head: Id[_], tail: List[Id[_]], acc: Int): Option[Int] = {
+            state.get(head) match {
+              case None => None
+              case Some(d) =>
+                val newAcc = Math.max(acc, d)
+                tail match {
+                  case Nil => Some(newAcc)
+                  case h :: t => maxId(h, t, newAcc)
+                }
+            }
+
+          }
+          maxId(h, t, 0) match {
+            case Some(depth) =>
+              val state1 = state.updated(id, depth + 1)
+              lookup(state1, rest, nextRound)
+            case None =>
+             lookup(state, rest, item :: nextRound)
           }
       }
-    }
+
+    @annotation.tailrec
+    def loop(stack: List[Id[_]], seen: Set[Id[_]], state: Map[Id[_], Int], todo: List[(Id[_], Rest)]): Map[Id[_], Int] =
+      stack match {
+        case Nil =>
+          lookup(state, todo, Nil)
+        case h :: tail if seen(h) => loop(tail, seen, state, todo)
+        case h :: tail =>
+          val seen1 = seen + h
+          idToExp.get(h) match {
+            case None =>
+              loop(tail, seen1, state, todo)
+            case Some(Expr.Const(_)) =>
+              loop(tail, seen1, state.updated(h, 0), todo)
+            case Some(Expr.Var(id)) =>
+              loop(id :: tail, seen1, state, (h, Same(id)) :: todo)
+            case Some(Expr.Unary(id, _)) =>
+              loop(id :: tail, seen1, state, (h, Inc(id)) :: todo)
+            case Some(Expr.Binary(id0, id1, _)) =>
+              loop(id0 :: id1 :: tail, seen1, state, (h, MaxInc(id0, id1)) :: todo)
+            case Some(Expr.Variadic(ids, _)) =>
+              loop(ids reverse_::: tail, seen1, state, (h, Variadic(ids)) :: todo)
+          }
+      }
+
+    loop(roots.toList, Set.empty, Map.empty, Nil)
+  }
 
   /**
    * Find all the nodes currently in the graph
@@ -269,14 +309,93 @@ sealed abstract class Dag[N[_]] extends Serializable { self =>
     all.iterator.collect { case Right(expr) => evalMemo(expr) }.toSet
   }
 
+  ////////////////////////////
+  //
+  //  These following methods are the only methods that directly
+  //  allocate new Dag instances. These are where all invariants
+  //  must be maintained
+  //
+  ////////////////////////////
+
+  /**
+   * Add a GC root, or tail in the DAG, that can never be deleted.
+   */
+  def addRoot[T](node: N[T]): (Dag[N], Id[T]) = {
+    val (dag, id) = ensure(node)
+    (dag.copy(gcroots = dag.roots + id), id)
+  }
+
+  // Convenient method to produce new, modified DAGs based on this
+  // one.
+  private def copy(
+      id2Exp: HMap[Id, Expr[N, ?]] = self.idToExp,
+      node2Literal: FunctionK[N, Literal[N, ?]] = self.toLiteral,
+      gcroots: Set[Id[_]] = self.roots
+  ): Dag[N] = new Dag[N] {
+    def idToExp = id2Exp
+    def roots = gcroots
+    def toLiteral = node2Literal
+  }
+
+  // Produce a new DAG that is equivalent to this one, but which frees
+  // orphaned nodes and other internal state which may no longer be
+  // needed.
+  private def gc: Dag[N] = {
+    val keepers = reachableIds
+    if (idToExp.forallKeys(keepers)) this
+    else copy(id2Exp = idToExp.filterKeys(keepers))
+  }
+
+  /*
+   * This updates the canonical Id for a given node and expression
+   */
+  protected def replaceId[A](newId: Id[A], expr: Expr[N, A], node: N[A]): Dag[N] =
+    copy(id2Exp = idToExp.updated(newId, expr))
+
+  protected def repointIds[A](
+    orig: N[A],
+    oldIds: Iterable[Id[A]],
+    newId: Id[A],
+    newNode: N[A]): Dag[N] =
+    if (oldIds.nonEmpty) {
+      val newIdToExp = oldIds.foldLeft(idToExp) { (mapping, origId) =>
+        mapping.updated(origId, Expr.Var[N, A](newId))
+      }
+      copy(id2Exp = newIdToExp).gc
+    }
+    else this
+
+  /**
+   * This is only called by ensure
+   *
+   * Note, Expr must never be a Var
+   */
+  private def addExp[T](exp: Expr[N, T]): (Dag[N], Id[T]) = {
+    require(!exp.isVar)
+    val nodeId = Id.next[T]()
+    (copy(id2Exp = idToExp.updated(nodeId, exp)), nodeId)
+  }
+
+  ////////////////////////////
+  //
+  // End of methods that direcly allocate new Dag instances
+  //
+  ////////////////////////////
+
   /**
    * This finds an Id[T] in the current graph that is equivalent
    * to the given N[T]
    */
   def find[T](node: N[T]): Option[Id[T]] =
-    nodeToId.getOrElseUpdate(
-      node, {
-        findAll(node).filterNot { id => idToExp(id).isVar } match {
+    findLiteral(toLiteral(node), node)
+
+  private def findLiteral[T](lit: Literal[N, T], n: => N[T]): Option[Id[T]] =
+    litToId.getOrElseUpdate(
+      lit, {
+        // It's important to not compare equality in the Literal
+        // space because it can have function members that are
+        // equivalent, but not .equals
+        findAll(n).filterNot { id => idToExp(id).isVar } match {
           case Stream.Empty =>
             // if the node is the in the graph it has at least
             // one non-Var node
@@ -309,7 +428,9 @@ sealed abstract class Dag[N[_]] extends Serializable { self =>
    * Nodes can have multiple ids in the graph, this gives all of them
    */
   def findAll[T](node: N[T]): Stream[Id[T]] = {
-
+    // TODO: this computation is really expensive, 60% of CPU in a recent benchmark
+    // maintaining these mappings would be nice, but maybe expensive as we are rewriting
+    // nodes
     val f = new FunctionK[HMap[Id, Expr[N, ?]]#Pair, Lambda[x => Option[Id[x]]]] {
       def toFunction[T1] = {
         case (thisId, expr) =>
@@ -320,7 +441,6 @@ sealed abstract class Dag[N[_]] extends Serializable { self =>
     // this cast is safe if node == expr.evaluate(idToExp) implies types match
     idToExp.optionMap(f).asInstanceOf[Stream[Id[T]]]
   }
-
 
   /**
    * This throws if the node is missing, use find if this is not
@@ -334,57 +454,87 @@ sealed abstract class Dag[N[_]] extends Serializable { self =>
     }
 
   /**
-   * This is only called by ensure
-   *
-   * Note, Expr must never be a Var
-   */
-  private def addExp[T](node: N[T], exp: Expr[N, T]): (Dag[N], Id[T]) = {
-    require(!exp.isVar)
-    val nodeId = Id.next[T]()
-    (copy(id2Exp = idToExp.updated(nodeId, exp)), nodeId)
-  }
-
-  /**
    * ensure the given literal node is present in the Dag
    * Note: it is important that at each moment, each node has
    * at most one id in the graph. Put another way, for all
    * Id[T] in the graph evaluate(id) is distinct.
    */
-  protected def ensure[T](node: N[T]): (Dag[N], Id[T]) =
-    find(node) match {
+  protected def ensure[T](node: N[T]): (Dag[N], Id[T]) = {
+    val lit = toLiteral(node)
+    val litMemo = Literal.evaluateMemo[N]
+    try ensureFast(lit, litMemo)
+    catch {
+      case _: Throwable => //StackOverflowError should work, but not on scala.js
+        ensureRec(lit, litMemo).result
+    }
+  }
+
+  /*
+   * This does recursion on the stack, which is faster, but can overflow
+   */
+  protected def ensureFast[T](lit: Literal[N, T], memo: FunctionK[Literal[N, ?], N]): (Dag[N], Id[T]) =
+    findLiteral(lit, memo(lit)) match {
       case Some(id) => (this, id)
       case None =>
-        toLiteral(node) match {
+        lit match {
           case Literal.Const(n) =>
-            /*
-             * Since the code is not performance critical, but correctness critical, and we can't
-             * check this property with the typesystem easily, check it here
-             */
-            require(n == node,
-                    s"Equality or toLiteral is incorrect: nodeToLit($node) = Const($n)")
-            addExp(node, Expr.Const(n))
+            addExp(Expr.Const(n))
           case Literal.Unary(prev, fn) =>
-            val (exp1, idprev) = ensure(prev.evaluate)
-            exp1.addExp(node, Expr.Unary(idprev, fn))
+            val (exp1, idprev) = ensureFast(prev, memo)
+            exp1.addExp(Expr.Unary(idprev, fn))
           case Literal.Binary(n1, n2, fn) =>
-            // use a common memoized function on both branches
-            // this is safe because Literal does not know about Id
-            val evalLit = Literal.evaluateMemo[N]
-            val (exp1, id1) = ensure(evalLit(n1))
-            val (exp2, id2) = exp1.ensure(evalLit(n2))
-            exp2.addExp(node, Expr.Binary(id1, id2, fn))
+            val (exp1, id1) = ensureFast(n1, memo)
+            val (exp2, id2) = exp1.ensureFast(n2, memo)
+            exp2.addExp(Expr.Binary(id1, id2, fn))
           case Literal.Variadic(args, fn) =>
-            val evalLit = Literal.evaluateMemo[N]
-            val init: Dag[N] = this
-            def go[A](args: List[Literal[N, A]]): (Dag[N], List[Id[A]]) = {
-              val (e, ids) = args.foldLeft((init, List.empty[Id[A]])) { case ((exp, ids), n) =>
-                val (nextExp, id) = exp.ensure(evalLit(n))
-                (nextExp, id :: ids)
+            @annotation.tailrec
+            def go[A](dag: Dag[N], args: List[Literal[N, A]], acc: List[Id[A]]): (Dag[N], List[Id[A]]) =
+              args match {
+                case Nil => (dag, acc.reverse)
+                case h :: tail =>
+                   val (dag1, hid) = dag.ensureFast(h, memo)
+                   go(dag1,tail, hid :: acc)
               }
-              (e, ids.reverse)
+
+            val (d, ids) = go(this, args, Nil)
+            d.addExp(Expr.Variadic(ids, fn))
+        }
+    }
+
+  protected def ensureRec[T](lit: Literal[N, T], memo: FunctionK[Literal[N, ?], N]): TailCalls.TailRec[(Dag[N], Id[T])] =
+    findLiteral(lit, memo(lit)) match {
+      case Some(id) => TailCalls.done((this, id))
+      case None =>
+        lit match {
+          case Literal.Const(n) =>
+            TailCalls.done(addExp(Expr.Const(n)))
+          case Literal.Unary(prev, fn) =>
+            TailCalls.tailcall(ensureRec(prev, memo)).map { case (exp1, idprev) =>
+              exp1.addExp(Expr.Unary(idprev, fn))
             }
-            val (exp1, ids) = go(args)
-            exp1.addExp(node, Expr.Variadic(ids, fn))
+          case Literal.Binary(n1, n2, fn) =>
+            for {
+              p1 <- TailCalls.tailcall(ensureRec(n1, memo))
+              (exp1, id1) = p1
+              p2 <- TailCalls.tailcall(exp1.ensureRec(n2, memo))
+              (exp2, id2) = p2
+            } yield exp2.addExp(Expr.Binary(id1, id2, fn))
+          case Literal.Variadic(args, fn) =>
+            def go[A](dag: Dag[N], args: List[Literal[N, A]]): TailCalls.TailRec[(Dag[N], List[Id[A]])] =
+              args match {
+                case Nil => TailCalls.done((dag, Nil))
+                case h :: tail =>
+                  for {
+                    rest <- go(dag, tail)
+                    (dag1, its) = rest
+                    dagH <- TailCalls.tailcall(dag1.ensureRec(h, memo))
+                    (dag2, idh) = dagH
+                  } yield (dag2, idh :: its)
+              }
+
+            go(this, args).map { case (d, ids)  =>
+              d.addExp(Expr.Variadic(ids, fn))
+            }
         }
     }
 
@@ -423,7 +573,6 @@ sealed abstract class Dag[N[_]] extends Serializable { self =>
   def fanOut(node: N[_]): Int = {
     val interiorFanOut = dependentsOf(node).size
     val tailFanOut = if (isRoot(node)) 1 else 0
-
     interiorFanOut + tailFanOut
   }
 
@@ -432,6 +581,58 @@ sealed abstract class Dag[N[_]] extends Serializable { self =>
    */
   def isRoot(n: N[_]): Boolean =
     roots.iterator.exists(evaluatesTo(_, n))
+
+  // This is a roots up iterator giving the depth
+  // to the nearest root and in sorted by Id.serial
+  // within each depth
+  private def rootsUp: Iterator[(Int, Id[_])] = {
+    type State = (Int, Id[_], List[Id[_]], List[Id[_]], Set[Id[_]])
+
+    def sort(l: List[Id[_]]): List[Id[_]] =
+      l.asInstanceOf[List[Id[Any]]].sorted
+
+    def computeNext(s: List[Id[_]], seen: Set[Id[_]]): (List[Id[_]], Set[Id[_]]) =
+      s.foldLeft((List.empty[Id[_]], seen)) {
+        case ((l, s), id) =>
+          val newIds = Expr.dependsOnIds(idToExp(id)).filterNot(seen)
+          (newIds reverse_::: l, s ++ newIds)
+      }
+
+    def initState: Option[State] = {
+      val rootList = roots.toList
+      val (next, seen) = computeNext(rootList, rootList.toSet)
+      sort(rootList) match {
+        case Nil => None
+        case h :: tail => Some((0, h, tail, next, seen))
+      }
+    }
+
+    def nextState(current: State): Option[State] =
+      current match {
+        case (_, _, Nil, Nil, _) =>
+          None
+        case (depth, _, Nil, nextBatch, seen) =>
+          // nextBatch has at least one item, and sorting preserves that
+          val h :: tail = sort(nextBatch)
+          val (nextBatch1, seen1) = computeNext(nextBatch, seen)
+          Some((depth + 1, h, tail, nextBatch1, seen1))
+        case (d, _, h :: tail, next, seen) =>
+          Some((d, h, tail, next, seen))
+      }
+
+    new Iterator[(Int, Id[_])] {
+      var state: Option[State] = initState
+
+      def hasNext = state.isDefined
+      def next: (Int, Id[_]) =
+        state match {
+          case None => throw new NoSuchElementException("roots up has no more items")
+          case Some(s) =>
+            state = nextState(s)
+            (s._1, s._2)
+        }
+    }
+  }
 
   /**
    * Is this node in this DAG

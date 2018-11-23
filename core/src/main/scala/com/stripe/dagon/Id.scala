@@ -3,6 +3,7 @@ package com.stripe.dagon
 import java.util.concurrent.atomic.AtomicLong
 
 import java.io.Serializable
+
 /**
  * The Expressions are assigned Ids. Each Id is associated with
  * an expression of inner type T.

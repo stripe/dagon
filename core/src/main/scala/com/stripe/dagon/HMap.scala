@@ -51,13 +51,13 @@ final class HMap[K[_], V[_]](protected val map: Map[K[_], V[_]]) extends Seriali
     HMap.from[K, V](map - k)
 
   def apply[T](id: K[T]): V[T] =
-    get(id).get
+    map(id).asInstanceOf[V[T]]
 
   def get[T](id: K[T]): Option[V[T]] =
     map.get(id).asInstanceOf[Option[V[T]]]
 
   def contains[T](id: K[T]): Boolean =
-    get(id).isDefined
+    map.contains(id)
 
   def isEmpty: Boolean = map.isEmpty
 
@@ -73,12 +73,14 @@ final class HMap[K[_], V[_]](protected val map: Map[K[_], V[_]]) extends Seriali
     map.keySet
 
   def keysOf[T](v: V[T]): Set[K[T]] =
-    map.collect {
+    map.iterator.collect {
       case (k, w) if v == w => k.asInstanceOf[K[T]]
     }.toSet
 
-  def optionMap[R[_]](f: FunctionK[Pair, Lambda[x => Option[R[x]]]]): Stream[R[_]] =
-    map.toStream.asInstanceOf[Stream[(K[Any], V[Any])]].flatMap(f(_))
+  def optionMap[R[_]](f: FunctionK[Pair, Lambda[x => Option[R[x]]]]): Stream[R[_]] = {
+    val fnAny = f.toFunction[Any].andThen(_.iterator)
+    map.iterator.asInstanceOf[Iterator[(K[Any], V[Any])]].flatMap(fnAny).toStream
+  }
 }
 
 object HMap {
