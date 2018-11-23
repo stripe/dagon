@@ -434,6 +434,7 @@ sealed abstract class Dag[N[_]] extends Serializable { self =>
     val f = new FunctionK[HMap[Id, Expr[N, ?]]#Pair, Lambda[x => Option[Id[x]]]] {
       def toFunction[T1] = {
         case (thisId, expr) =>
+          val evalNode = evalMemo(expr)
           if (node == evalMemo(expr)) Some(thisId) else None
       }
     }
@@ -461,29 +462,30 @@ sealed abstract class Dag[N[_]] extends Serializable { self =>
    */
   protected def ensure[T](node: N[T]): (Dag[N], Id[T]) = {
     val lit = toLiteral(node)
-    try ensureFast(lit)
+    val litMemo = Literal.evaluateMemo[N]
+    try ensureFast(lit, litMemo)
     catch {
       case _: Throwable => //StackOverflowError should work, but not on scala.js
-        ensureRec(lit).result
+        ensureRec(lit, litMemo).result
     }
   }
 
   /*
    * This does recursion on the stack, which is faster, but can overflow
    */
-  protected def ensureFast[T](lit: Literal[N, T]): (Dag[N], Id[T]) =
-    findLiteral(lit, lit.evaluate) match {
+  protected def ensureFast[T](lit: Literal[N, T], memo: FunctionK[Literal[N, ?], N]): (Dag[N], Id[T]) =
+    findLiteral(lit, memo(lit)) match {
       case Some(id) => (this, id)
       case None =>
         lit match {
           case Literal.Const(n) =>
             addExp(Expr.Const(n))
           case Literal.Unary(prev, fn) =>
-            val (exp1, idprev) = ensureFast(prev)
+            val (exp1, idprev) = ensureFast(prev, memo)
             exp1.addExp(Expr.Unary(idprev, fn))
           case Literal.Binary(n1, n2, fn) =>
-            val (exp1, id1) = ensureFast(n1)
-            val (exp2, id2) = exp1.ensureFast(n2)
+            val (exp1, id1) = ensureFast(n1, memo)
+            val (exp2, id2) = exp1.ensureFast(n2, memo)
             exp2.addExp(Expr.Binary(id1, id2, fn))
           case Literal.Variadic(args, fn) =>
             @annotation.tailrec
@@ -491,7 +493,7 @@ sealed abstract class Dag[N[_]] extends Serializable { self =>
               args match {
                 case Nil => (dag, acc.reverse)
                 case h :: tail =>
-                   val (dag1, hid) = dag.ensureFast(h)
+                   val (dag1, hid) = dag.ensureFast(h, memo)
                    go(dag1,tail, hid :: acc)
               }
 
@@ -500,22 +502,22 @@ sealed abstract class Dag[N[_]] extends Serializable { self =>
         }
     }
 
-  protected def ensureRec[T](lit: Literal[N, T]): TailCalls.TailRec[(Dag[N], Id[T])] =
-    findLiteral(lit, lit.evaluate) match {
+  protected def ensureRec[T](lit: Literal[N, T], memo: FunctionK[Literal[N, ?], N]): TailCalls.TailRec[(Dag[N], Id[T])] =
+    findLiteral(lit, memo(lit)) match {
       case Some(id) => TailCalls.done((this, id))
       case None =>
         lit match {
           case Literal.Const(n) =>
             TailCalls.done(addExp(Expr.Const(n)))
           case Literal.Unary(prev, fn) =>
-            TailCalls.tailcall(ensureRec(prev)).map { case (exp1, idprev) =>
+            TailCalls.tailcall(ensureRec(prev, memo)).map { case (exp1, idprev) =>
               exp1.addExp(Expr.Unary(idprev, fn))
             }
           case Literal.Binary(n1, n2, fn) =>
             for {
-              p1 <- TailCalls.tailcall(ensureRec(n1))
+              p1 <- TailCalls.tailcall(ensureRec(n1, memo))
               (exp1, id1) = p1
-              p2 <- TailCalls.tailcall(exp1.ensureRec(n2))
+              p2 <- TailCalls.tailcall(exp1.ensureRec(n2, memo))
               (exp2, id2) = p2
             } yield exp2.addExp(Expr.Binary(id1, id2, fn))
           case Literal.Variadic(args, fn) =>
@@ -526,7 +528,7 @@ sealed abstract class Dag[N[_]] extends Serializable { self =>
                   for {
                     rest <- go(dag, tail)
                     (dag1, its) = rest
-                    dagH <- TailCalls.tailcall(dag1.ensureRec(h))
+                    dagH <- TailCalls.tailcall(dag1.ensureRec(h, memo))
                     (dag2, idh) = dagH
                   } yield (dag2, idh :: its)
               }
