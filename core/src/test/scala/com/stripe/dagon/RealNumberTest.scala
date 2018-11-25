@@ -149,9 +149,21 @@ object RealNumbers {
          val sum1 = Real.sum(SortedList.fromList(cross(sums)))
          if (nonSums.isEmpty) sum1
          else {
-           Real.prod(Prod(nonSums), sum1)
+           Real.prod(Real.prod(nonSums), sum1)
          }
       }
+
+    def +(that: Real): Real =
+      Real.sum(this, that)
+
+    def unary_-(): Real =
+      Real.prod(Const(-1.0), this)
+
+    def -(that: Real): Real =
+      this + (-that)
+
+    def *(that: Real): Real =
+      Real.prod(this, that)
 
     def evaluate(m: Map[String, Double]): Option[Double] =
       this match {
@@ -273,6 +285,31 @@ object RealNumbers {
         case Prod(p) => costOp(p)
       }
     }
+
+    /**
+     * What is the order of polynomial for each variable
+     */
+    def orderMap: Map[String, Int] =
+      this match {
+        case Const(_) => Map.empty
+        case Variable(x) => Map((x, 1))
+        case Sum(items) =>
+          items
+            .foldLeft(Map.empty[String, Int]) { (o, v) =>
+              val ov = v.orderMap
+              (o.keySet ++ ov.keySet).foldLeft(o) { case (o, k) =>
+                o.updated(k, o.getOrElse(k, 0) max ov.getOrElse(k, 0))
+              }
+            }
+        case Prod(items) =>
+          items
+            .foldLeft(Map.empty[String, Int]) { (o, v) =>
+              val ov = v.orderMap
+              (o.keySet ++ ov.keySet).foldLeft(o) { case (o, k) =>
+                o.updated(k, o.getOrElse(k, 0) + ov.getOrElse(k, 0))
+              }
+            }
+      }
   }
   object Real {
     case class Const(toDouble: Double) extends Real {
@@ -683,7 +720,7 @@ object RealNumbers {
     CombineConst orElse CombineProdSum orElse RemoveNoOp
 
   // ReduceProd is a bit expensive, do it after everything else can't be applied
-  val allRules: Seq[Rule[RealN]] =
+  val allRules: List[Rule[RealN]] =
     allRules0 :: (ReduceProd orElse allRules0) :: Nil
 
   implicit val arbRule: Arbitrary[Rule[RealN]] =
@@ -1008,5 +1045,52 @@ class RealNumberTest extends FunSuite {
        val optR = optimizeAll(expanded)
        assert(optR.cost.toDouble <= prettyGood, s"$r ($cost0) optimized to $optR expanded to: $expanded expanded cost: $expCost")
      }
+   }
+
+   test("orderMap works") {
+     List(
+       ("x", Map("x" -> 1)),
+       ("(x*x)", Map("x" -> 2)),
+       ("((x + 1)*(x + 2))", Map("x" -> 2)),
+       ("((x + x)*(x + 2))", Map("x" -> 2)))
+       .foreach { case (r, o) =>
+         assert(real(r).orderMap == o, s"$r")
+       }
+   }
+
+   test("test L2 norm example") {
+     import Real._
+     val terms = 100
+     val points = (1 to terms).map { i => const(i.toDouble) }
+     // sum_i (d_i - x)*(d_i - x)
+     val x = Variable("x")
+     val l2 = Real.sum(SortedList.fromList(points.map { d => (d - x) * (d - x) }.toList))
+
+     object ExpandWhenOrderMatches extends Rule[RealN] {
+       def apply[T](on: Dag[RealN]) = {
+         case s@Sum(items) =>
+           val newItems = items
+             .groupBy(_.orderMap)
+             .iterator
+             .map { case (_, vs) =>
+               // we can combine sums of the same order:
+               if (vs.size > 1) {
+                 sum(SortedList.fromList(vs.iterator.map(_.expand).toList))
+               }
+               else vs.head
+             }
+             .toList
+
+           val newSum = sum(SortedList.fromList(newItems))
+           if (items == newSum) None
+           else Some(newSum)
+         case _ => None
+       }
+     }
+
+     val optL2 = Dag.applyRuleSeq[Any, RealN](l2, toLiteral, ExpandWhenOrderMatches :: allRules)
+
+     val optC = optL2.cost
+     assert(optC == 4) // we can convert polynomial order 2 to a*(b + x*(c + x))
    }
 }
