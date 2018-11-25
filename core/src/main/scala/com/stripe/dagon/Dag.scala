@@ -91,6 +91,16 @@ sealed abstract class Dag[N[_]] extends Serializable { self =>
   def applySeq(phases: Seq[Rule[N]]): Dag[N] =
     phases.foldLeft(this) { (dag, rule) => dag(rule) }
 
+  def applySeqOnce(phases: Seq[Rule[N]]): Dag[N] =
+    phases
+      .iterator
+      .map { rule => applyOnce(rule) }
+      .filter(_ ne this)
+      .take(1)
+      .toList
+      .headOption
+      .getOrElse(this)
+
   /**
    * apply the rule at the first place that satisfies
    * it, and return from there.
