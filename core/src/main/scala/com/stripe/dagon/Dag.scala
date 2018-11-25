@@ -772,4 +772,16 @@ object Dag {
     val (dag, id) = apply(n, nodeToLit)
     dag(rule).evaluate(id)
   }
+
+  /**
+   * This is useful when you have rules you want applied in a certain order.
+   * Given a N[T] and a way to convert to Literal[T, N],
+   * for each rule in the sequence,
+   * apply the given rule until it no longer applies, and return the N[T] which is
+   * equivalent under the given rule
+   */
+  def applyRuleSeq[T, N[_]](n: N[T], nodeToLit: FunctionK[N, Literal[N, ?]], rules: Seq[Rule[N]]): N[T] = {
+    val (dag, id) = apply(n, nodeToLit)
+    dag.applySeq(rules).evaluate(id)
+  }
 }

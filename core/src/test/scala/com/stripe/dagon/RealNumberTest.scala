@@ -29,8 +29,14 @@ object RealNumbers {
     def +[A1 >: A: Ordering](a: A1): SortedList[A1] =
       new SortedList((a :: toList).sorted)
 
-    def -[A1 >: A](a: A1): SortedList[A1] =
-      filterNot(_ == a)
+    def removeFirst[A1 >: A](a: A1): SortedList[A1] =
+      toList match {
+        case Nil => new SortedList(Nil)
+        case h :: tail if h == a => new SortedList(tail)
+        case h :: tail =>
+          val tl = new SortedList(tail)
+          new SortedList(h :: (tl.removeFirst(a)).toList)
+      }
 
     def ++[A1 >: A: Ordering](that: Iterable[A1]): SortedList[A1] =
       new SortedList((toList ++ that).sorted)
@@ -193,12 +199,14 @@ object RealNumbers {
      */
     def divOpt(r0: Real): Option[Real] =
       r0 match {
+        case z if z.isDefinitelyZero => None
+        case c@Const(_) if !c.isFinite => None
         case same if same == self => Some(one)
         case Prod(ps) =>
           // to divide by a product all must divide
           @annotation.tailrec
           def loop(r: Real, ps: SortedList[Real]): Option[Real] =
-            if (ps.isEmpty) Some(one)
+            if (ps.isEmpty) Some(r)
             else r.divOpt(ps.head) match {
               case None => None
               case Some(r1) => loop(r1, ps.tail)
@@ -223,10 +231,10 @@ object RealNumbers {
                   }
                   .collectFirst { case Some(res) => res }
               }
-            case Const(d) =>
+            case c@Const(d) if c.isFinite =>
               nonProd match {
                 // we want to make progress, not do a naive division
-                case Const(d1) if d1 != 1.0 => Some(Const(d/d1))
+                case c1@Const(d1) if c1.isFinite && d1 != 1.0 => Some(Const(d/d1))
                 case _ => None
               }
             case _ => None
@@ -267,7 +275,10 @@ object RealNumbers {
     }
   }
   object Real {
-    case class Const(toDouble: Double) extends Real
+    case class Const(toDouble: Double) extends Real {
+      def isFinite: Boolean =
+        java.lang.Double.isFinite(toDouble)
+    }
     case class Variable(name: String) extends Real
     // use a sorted set, we have unique representations
     case class Sum(terms: SortedList[Real]) extends Real
@@ -281,11 +292,11 @@ object RealNumbers {
 
     // What things can a given number
     def divisors(r: Real): List[Real] =
-      r match {
+      (r match {
         case p@Prod(ps) =>
           p :: ps.flatMap(divisors(_))
         case nonProd => nonProd :: Nil
-      }
+      }).filterNot(_.isDefinitelyZero)
 
     def sum(a: Real, b: Real): Real =
       sum(SortedList(a, b))
@@ -613,22 +624,21 @@ object RealNumbers {
                 // divide any of the rest, but it does divide the union.
                 //
                 // To handle this case, if we have a sum, subtract p
-                val maybeProdNotP = p match {
+                val (hadP, maybeProdNotP) = p match {
                   case Sum(ps) if ps.nonEmpty && ps.forall(maybeProd(_)) =>
-                    ps.foldLeft(maybeProd)(_ - _)
-                  case _ => maybeProd
+                    (true, ps.foldLeft(maybeProd)(_.removeFirst(_)))
+                  case _ => (false, maybeProd)
                 }
-                val hadP = maybeProd != maybeProdNotP
                 val divO = maybeProdNotP.toList.map { pr => (pr.divOpt(p), pr) }
                 val canDiv = divO.collect { case (Some(res), _) => res }
                 val noDiv = divO.collect { case (None, pr) => pr }
                 // we don't want to use Real.sum here which can
                 // do normalizations we don't want in a rule
-                val cd = if (hadP) p :: canDiv else canDiv
+                val cd = if (hadP) one :: canDiv else canDiv
                 val canDiv1 = Sum(SortedList.fromList(cd))
                 val res = (p, canDiv1, noDiv)
 
-                //println(res)
+                //println(s"$r => $res")
                 res
               }
               // we want to factor from at least two items
@@ -641,11 +651,11 @@ object RealNumbers {
                  * p*canDiv + noDiv
                  */
                 val noDiv1 = sum(SortedList.fromList(noDiv))
-                val r = sum(prod(p, canDiv1), noDiv1)
-                val c1 = r.cost
+                val r1 = sum(prod(p, canDiv1), noDiv1)
+                val c1 = r1.cost
                 if (c1 < c0) {
-                  //println(s"decreased cost: $c1 from $c0: $r")
-                  (c1, r)
+                  //println(s"decreased cost: $c1 from $c0: $r => $r1")
+                  (c1, r1)
                 }
                 else {
                   //println(s"did not decrease cost: $c1 from $c0: $r")
@@ -653,7 +663,7 @@ object RealNumbers {
                   val canDiv2 = CombineConst.combine(canDiv1).getOrElse(canDiv1)
                   val r1 = sum(prod(p, canDiv2), noDiv1)
                   val res = (r1.cost, r1)
-                  //println(s"try 2 to decrease cost: ${res._1} from $c0: $r1")
+                  //println(s"try 2 to decrease cost: ${res._1} from $c0: $r => $r1")
                   res
                 }
               }
@@ -737,6 +747,26 @@ class RealNumberTest extends FunSuite {
    //PropertyCheckConfiguration(minSuccessful = 5000)
    PropertyCheckConfiguration(minSuccessful = 500)
 
+  def close(a: Double, b: Double, msg: => String) = {
+    val diff = Math.abs(a - b)
+    if (diff < 1e-6) succeed
+    else {
+      // this should really only happen for giant numbers
+      assert(Math.abs(a) > 1e9 || Math.abs(b) > 1e9, msg)
+    }
+  }
+
+  def closeOpt(opt: Option[Double], nonOpt: Option[Double], msg: => String) =
+    (opt, nonOpt) match {
+      case (None, None) => succeed
+      case (Some(_), None) =>
+        // optimization can make things succeed: 0.0 * a = 0.0, so we don't need to know a
+        ()
+      case (None, Some(_)) => fail(s"unoptimized succeded: $msg")
+      case (Some(a), Some(b)) => close(a, b, s"$msg, $a, $b")
+    }
+
+
   test("can parse") {
     assert(real("1") == Real.Const(1.0))
     assert(real("1.0") == Real.Const(1.0))
@@ -781,25 +811,6 @@ class RealNumberTest extends FunSuite {
     strongCases.foreach { s => law(real(s), true) }
   }
 
-  def close(a: Double, b: Double, msg: => String) = {
-    val diff = Math.abs(a - b)
-    if (diff < 1e-6) succeed
-    else {
-      // this should really only happen for giant numbers
-      assert(Math.abs(a) > 1e9 || Math.abs(b) > 1e9, msg)
-    }
-  }
-
-  def closeOpt(opt: Option[Double], nonOpt: Option[Double], msg: => String) =
-    (opt, nonOpt) match {
-      case (None, None) => succeed
-      case (Some(_), None) =>
-        // optimization can make things succeed: 0.0 * a = 0.0, so we don't need to know a
-        ()
-      case (None, Some(_)) => fail(s"unoptimized succeded: $msg")
-      case (Some(a), Some(b)) => close(a, b, s"$msg, $a, $b")
-    }
-
   test("rules don't loop") {
      def neverLoop(r: Real, rules: List[Rule[RealN]]): Unit = {
        val (dag, id) = Dag[Any, RealN](r, toLiteral)
@@ -827,12 +838,63 @@ class RealNumberTest extends FunSuite {
   }
 
   test("optimization does not change evaluation") {
-    val genMap = Gen.mapOf(Gen.zip(Gen.choose('a', 'z').map(_.toString), Gen.choose(-1000.0, 1000.0)))
-
-    forAll(Real.genReal(3), genMap)  { (r, vars) =>
-      val optR = optimizeAll(r)
+    def law(r: Real, vars: Map[String, Double], ruleSeq: Seq[Rule[RealN]]) = {
+      val optR = Dag.applyRuleSeq[Any, RealN](r, toLiteral, ruleSeq)
       closeOpt(optR.evaluate(vars), r.evaluate(vars), s"$optR, $r")
     }
+
+     val ruleSeqGen: Gen[Seq[Rule[RealN]]] =
+       implicitly[Arbitrary[Set[Rule[RealN]]]].arbitrary.map(_.toSeq)
+
+     val genMap = Gen.mapOf(Gen.zip(Gen.choose('a', 'z').map(_.toString), Gen.choose(-1000.0, 1000.0)))
+
+     def genCompleteMap(r: Real): Gen[Map[String, Double]] = {
+       val vars = r.freeVars
+       val sz = vars.size
+       Gen.listOfN(sz, Gen.choose(-1000.0, 1000.0)).map { ds =>
+         vars.zip(ds).toMap
+       }
+     }
+
+     val completeEval =
+       Real
+         .genReal(3)
+         .flatMap { r => genCompleteMap(r).map((r, _)) }
+
+    forAll(Real.genReal(3), genMap, ruleSeqGen)(law(_, _, _))
+
+    forAll(completeEval,
+      implicitly[Arbitrary[Set[Rule[RealN]]]].arbitrary) {
+        case ((r, m), rules) =>
+          val res0 = r.evaluate(m)
+          val rOpt = Dag.applyRuleSeq[Any, RealN](r, toLiteral, rules.toList)
+          val resOpt = rOpt.evaluate(m)
+
+          // scalacheck's broken shrinking kills this, if you see
+          // fishy failures, comment it out, until you debug
+          assert(res0.isDefined, s"expected unoptimized to work")
+          assert(resOpt.isDefined, s"expected optimized to work")
+          closeOpt(resOpt, res0, s"$rOpt, $r")
+      }
+
+    forAll(completeEval, Real.genReal(3)) { case ((r0, vars), r1) =>
+      r0.divOpt(r1) match {
+        case None => ()
+        case Some(r2) =>
+          // r0/r1 == r2, so r0 == r1 * r2
+          closeOpt(Real.prod(r1, r2).evaluate(vars), r0.evaluate(vars), s"numerator: $r2")
+      }
+    }
+
+    // past failures here
+     List(
+        ("((-986.0*x) + (-325.0*363.0*z) + (530.0*928.0*x))",
+          Map("x" -> 1.0, "z" -> 10.0), allRules0 :: Nil),
+        ("(q + q + r + x + (-755.0*-394.0*674.0))",
+          Map("x" -> 0.0, "q" -> 0.0, "r" -> 3.3953184045350335E-5), ReduceProd :: Nil),
+        ("(x + (y + ((x*2) + (y*2))))", Map("x" -> 1.0, "y" -> 10.0), allRules)
+      ).foreach {case (inputS, vars, ruleSet) => law(real(inputS), vars, ruleSet) }
+
   }
 
   test("evaluation works when all vars are present") {
