@@ -60,11 +60,19 @@ object HMapTests extends Properties("HMap") {
     } yield (k, v)).map(fromPairs))
 
   type FK = FunctionK[H#Pair, Lambda[x => Option[Value[x]]]]
+  type FKValues = FunctionK[Value, Value]
 
   implicit val arbitraryFunctionK: Arbitrary[FK] =
     Arbitrary(arbitrary[(Int, Int) => Option[Int]].map { f =>
       new FK {
         def toFunction[T] = { case (Key(m), Value(n)) => f(m, n).map(Value(_)) }
+      }
+    })
+
+  implicit val arbitraryFunctionKValues: Arbitrary[FKValues] =
+    Arbitrary(arbitrary[Int => Int].map { f =>
+      new FKValues {
+        override def toFunction[T] = v => Value(f(v.value))
       }
     })
 
@@ -151,4 +159,11 @@ object HMapTests extends Properties("HMap") {
   property("++ works") = forAll { (m1: Map[K, V], m2: Map[K, V]) =>
     fromPairs(m1) ++ fromPairs(m2) == fromPairs(m1 ++ m2)
   }
+
+  property("mapValues works") =
+    forAll { (m: Map[K, V], fk: FKValues) =>
+      val h = fromPairs(m)
+      val got = fromPairs(m).mapValues(fk)
+      got.forallKeys({ k => got.get(k) == h.get(k).map(fk(_)) })
+    }
 }
