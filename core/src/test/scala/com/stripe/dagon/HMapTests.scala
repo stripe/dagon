@@ -147,4 +147,8 @@ object HMapTests extends Properties("HMap") {
     forAll { (h: H) =>
       h != null && h != 33
     }
+
+  property("++ works") = forAll { (m1: Map[K, V], m2: Map[K, V]) =>
+    fromPairs(m1) ++ fromPairs(m2) == fromPairs(m1 ++ m2)
+  }
 }
