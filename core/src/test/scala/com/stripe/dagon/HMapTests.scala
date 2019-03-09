@@ -156,10 +156,14 @@ object HMapTests extends Properties("HMap") {
       h != null && h != 33
     }
 
+  property("++ works") = forAll { (m1: Map[K, V], m2: Map[K, V]) =>
+    fromPairs(m1) ++ fromPairs(m2) == fromPairs(m1 ++ m2)
+  }
+
   property("mapValues works") =
-    forAll { (m: Map[K, V] , fk: FKValues) =>
+    forAll { (m: Map[K, V], fk: FKValues) =>
       val h = fromPairs(m)
       val got = fromPairs(m).mapValues(fk)
-      got.forallKeys({k => got.get(k) == h.get(k).map(fk(_))})
+      got.forallKeys({ k => got.get(k) == h.get(k).map(fk(_)) })
     }
 }

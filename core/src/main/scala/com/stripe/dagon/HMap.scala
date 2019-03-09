@@ -47,6 +47,9 @@ final class HMap[K[_], V[_]](protected val map: Map[K[_], V[_]]) extends Seriali
   def +[T](kv: (K[T], V[T])): HMap[K, V] =
     HMap.from[K, V](map + kv)
 
+  def ++(other: HMap[K, V]): HMap[K, V] =
+    HMap.from[K, V](map ++ other.map)
+
   def -(k: K[_]): HMap[K, V] =
     HMap.from[K, V](map - k)
 
