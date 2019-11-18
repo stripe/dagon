@@ -340,10 +340,10 @@ sealed abstract class Dag[N[_]] extends Serializable { self =>
   // these are included for binary compatibility
 
   // $COVERAGE-OFF$
-  def com$stripe$dagon$Dag$$copy$default$2(): com.stripe.dagon.FunctionK[N, Literal[N, ?]] =
+  private[dagon] def com$stripe$dagon$Dag$$copy$default$2(): com.stripe.dagon.FunctionK[N, Literal[N, ?]] =
     self.toLiteral
 
-  def com$stripe$dagon$Dag$$copy$default$3(): scala.collection.immutable.Set[Id[_]] =
+  private[dagon] def com$stripe$dagon$Dag$$copy$default$3(): scala.collection.immutable.Set[Id[_]] =
     self.roots
   // $COVERAGE-ON$
 
