@@ -1,16 +1,20 @@
 import ReleaseTransformations._
 
+// shadow sbt-scalajs' crossProject and CrossType from Scala.js 0.6.x
+import sbtcrossproject.CrossPlugin.autoImport.{crossProject, CrossType}
+
 import com.typesafe.tools.mima.plugin.MimaPlugin.mimaDefaultSettings
 
 lazy val noPublish = Seq(publish := {}, publishLocal := {}, publishArtifact := false)
 
 lazy val dagonSettings = Seq(
   organization := "com.stripe",
-  scalaVersion := "2.12.3",
-  crossScalaVersions := Seq("2.10.6", "2.11.11", "2.12.3"),
-  libraryDependencies ++= Seq(compilerPlugin("org.spire-math" %% "kind-projector" % "0.9.4"),
-                              "org.scalatest" %%% "scalatest" % "3.0.3" % Test,
-                              "org.scalacheck" %%% "scalacheck" % "1.13.5" % Test),
+  scalaVersion := "2.12.9",
+  crossScalaVersions := Seq("2.11.12", "2.12.9"),
+  addCompilerPlugin("org.typelevel" %% "kind-projector" % "0.11.0" cross CrossVersion.full),
+  libraryDependencies ++= Seq(
+    "org.scalacheck" %%% "scalacheck" % "1.14.2" % Test,
+    "org.scalatestplus" %%% "scalatestplus-scalacheck" % "3.1.0.0-RC2" % Test),
   scalacOptions ++= Seq(
     "-deprecation",
     "-encoding",
@@ -93,7 +97,7 @@ lazy val dagonSettings = Seq(
 ) ++ mimaDefaultSettings
 
 def previousArtifact(proj: String) =
-  "com.stripe" %% s"dagon-$proj" % "0.2.4"
+  "com.stripe" %% s"dagon-$proj" % "0.3.0"
 
 lazy val commonJvmSettings = Seq(
   testOptions in Test += Tests.Argument(TestFrameworks.ScalaTest, "-oDF"))
@@ -101,7 +105,6 @@ lazy val commonJvmSettings = Seq(
 lazy val commonJsSettings = Seq(
   scalaJSStage in Global := FastOptStage,
   parallelExecution := false,
-  requiresDOM := false,
   jsEnv := new org.scalajs.jsenv.nodejs.NodeJSEnv(),
   // batch mode decreases the amount of memory needed to compile scala.js code
   scalaJSOptimizerOptions := scalaJSOptimizerOptions.value.withBatchMode(
@@ -133,16 +136,13 @@ lazy val dagonJS = project
   .dependsOn(coreJS)
   .enablePlugins(ScalaJSPlugin)
 
-lazy val core = crossProject
+lazy val core = crossProject(JSPlatform, JVMPlatform)
   .crossType(CrossType.Pure)
   .in(file("core"))
   .settings(name := "dagon-core")
   .settings(moduleName := "dagon-core")
   .settings(dagonSettings: _*)
   .settings(mimaPreviousArtifacts := Set(previousArtifact("core")))
-  .settings(libraryDependencies ++= Seq(
-    "org.typelevel" %%% "catalysts-platform" % "0.8" % "test"
-  ))
   .disablePlugins(JmhPlugin)
   .jsSettings(commonJsSettings: _*)
   .jsSettings(coverageEnabled := false)
@@ -166,8 +166,8 @@ lazy val docs = project
   .settings(name := "dagon-docs")
   .settings(dagonSettings: _*)
   .settings(noPublish: _*)
-  .settings(tutSettings: _*)
-  .settings(tutScalacOptions := {
+  .enablePlugins(TutPlugin)
+  .settings(scalacOptions in Tut := {
     val testOptions = scalacOptions.in(test).value
     val unwantedOptions = Set("-Xlint", "-Xfatal-warnings")
     testOptions.filterNot(unwantedOptions)
