@@ -93,7 +93,7 @@ lazy val dagonSettings = Seq(
 ) ++ mimaDefaultSettings
 
 def previousArtifact(proj: String) =
-  "com.stripe" %% s"dagon-$proj" % "0.2.4"
+  "com.stripe" %% s"dagon-$proj" % "0.3.0"
 
 lazy val commonJvmSettings = Seq(
   testOptions in Test += Tests.Argument(TestFrameworks.ScalaTest, "-oDF"))

@@ -37,16 +37,20 @@ import scala.util.hashing.MurmurHash3
  * arity
  */
 sealed trait Expr[N[_], T] extends Serializable { self: Product =>
+
   def evaluate(idToExp: HMap[Id, Expr[N, ?]]): N[T] =
     Expr.evaluate(idToExp, this)
 
   /**
-   * Be eager and memoize the hashCode, but notice that Expr
-   * is not recursive on itself (only via the Id graph) so
-   * it does not have the DAG-exponential-equality-and-hashcode
-   * issue that Literal and other DAGs have
+   * Memoize the hashCode, but notice that Expr is not recursive on
+   * itself (only via the Id graph) so it does not have the
+   * DAG-exponential-equality-and-hashcode issue that Literal and
+   * other DAGs have.
+   *
+   * We use a lazy val instead of a val for binary compatibility.
    */
-  override val hashCode: Int = MurmurHash3.productHash(self)
+  override lazy val hashCode: Int =
+    MurmurHash3.productHash(self)
 
   final def isVar: Boolean =
     this match {
