@@ -3,33 +3,33 @@ jdk: openjdk11
 
 matrix:
   include:
-    - scala: 2.11.11
+    - scala: 2.11.12
       env: PLATFORM="jvm"
-      #script: sbt "++2.11.11" coverage coreJVM/test doc mimaReportBinaryIssues coverageReport && codecov
-      script: sbt "++2.11.11" coverage coreJVM/test doc coverageReport && codecov
+      script: sbt "++2.11.12" coverage coreJVM/test doc mimaReportBinaryIssues coverageReport && codecov
+      #script: sbt "++2.11.12" coverage coreJVM/test doc coverageReport && codecov
 
-    - scala: 2.11.11
+    - scala: 2.11.12
       env: PLATFORM="js"
-      script: sbt "++2.11.11" coreJS/test
+      script: sbt "++2.11.12" coreJS/test
 
-    - scala: 2.12.3
+    - scala: 2.12.9
       env: PLATFORM="jvm"
-      #script: sbt "++2.12.3" coverage coreJVM/test doc mimaReportBinaryIssues coverageReport && codecov
-      script: sbt "++2.12.3" coverage coreJVM/test doc coverageReport && codecov
+      script: sbt "++2.12.9" coverage coreJVM/test doc mimaReportBinaryIssues coverageReport && codecov
+      #script: sbt "++2.12.9" coverage coreJVM/test doc coverageReport && codecov
 
-    - scala: 2.12.3
+    - scala: 2.12.9
       env: PLATFORM="js"
-      script: sbt "++2.12.3" coreJS/test
+      script: sbt "++2.12.9" coreJS/test
 
 install:
  - pip install --user codecov
 
 cache:
   directories:
-  - $HOME/.sbt/0.13/dependency
-  - $HOME/.sbt/boot/scala*
-  - $HOME/.sbt/launchers
+  - $HOME/.m2
   - $HOME/.ivy2/cache
+  - $HOME/.sbt
+  - $HOME/.coursier
   - $HOME/.nvm
 
 before_cache:

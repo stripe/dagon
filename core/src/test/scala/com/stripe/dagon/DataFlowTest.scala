@@ -1,8 +1,8 @@
 package com.stripe.dagon
 
-import org.scalatest.FunSuite
+import org.scalatest.funsuite.AnyFunSuite
 import org.scalacheck.{Arbitrary, Cogen, Gen}
-import org.scalatest.prop.GeneratorDrivenPropertyChecks._
+import org.scalatestplus.scalacheck.ScalaCheckDrivenPropertyChecks._
 import scala.util.control.TailCalls
 
 object DataFlowTest {
@@ -448,11 +448,10 @@ object DataFlowTest {
   }
 }
 
-class DataFlowTest extends FunSuite {
+class DataFlowTest extends AnyFunSuite {
 
   implicit val generatorDrivenConfig =
-   PropertyCheckConfiguration(minSuccessful = 5000)
-   // PropertyCheckConfiguration(minSuccessful = 10)
+    PropertyCheckConfiguration(minSuccessful = 5000)
 
   import DataFlowTest._
 
@@ -833,7 +832,8 @@ class DataFlowTest extends FunSuite {
       if (incs <= 0) f
       else incrementChain(f.map(_ + 1), incs - 1)
 
-    val incCount = if (catalysts.Platform.isJvm) 10000 else 1000
+    //val incCount = if (catalysts.Platform.isJvm) 10000 else 1000
+    val incCount = 1000
 
     val incFlow = incrementChain(IteratorSource((0 to 100).iterator), incCount)
     val (dag, id) = Dag(incFlow, Flow.toLiteralTail)
