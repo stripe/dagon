@@ -25,13 +25,13 @@ lazy val dagonSettings = Seq(
     "-language:implicitConversions",
     "-language:experimental.macros",
     "-unchecked",
-    //"-Xfatal-warnings",
+    "-Xfatal-warnings",
     "-Xlint",
-    //"-Yno-adapted-args",
+    "-Yno-adapted-args",
     "-Ywarn-dead-code",
     "-Ywarn-numeric-widen",
     "-Ywarn-value-discard",
-    //"-Xfuture"
+    "-Xfuture"
   ),
   // HACK: without these lines, the console is basically unusable,
   // since all imports are reported as being unused (and then become
@@ -106,7 +106,6 @@ lazy val commonJsSettings = Seq(
   scalaJSStage in Global := FastOptStage,
   parallelExecution := false,
   jsEnv := new org.scalajs.jsenv.nodejs.NodeJSEnv(),
-  //requiresDOM := false,
   jsEnv := new org.scalajs.jsenv.nodejs.NodeJSEnv(),
   // batch mode decreases the amount of memory needed to compile scala.js code
   scalaJSOptimizerOptions := scalaJSOptimizerOptions.value.withBatchMode(
@@ -145,9 +144,6 @@ lazy val core = crossProject(JSPlatform, JVMPlatform)
   .settings(moduleName := "dagon-core")
   .settings(dagonSettings: _*)
   .settings(mimaPreviousArtifacts := Set(previousArtifact("core")))
-  // .settings(libraryDependencies ++= Seq(
-  //   "org.typelevel" %%% "catalysts-platform" % "0.8" % "test"
-  // ))
   .disablePlugins(JmhPlugin)
   .jsSettings(commonJsSettings: _*)
   .jsSettings(coverageEnabled := false)

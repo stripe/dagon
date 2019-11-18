@@ -430,7 +430,7 @@ object DataFlowTest {
           input <- genFlow(g)
         } yield input.tagged(tag)
 
-      Gen.frequency((3, genSource), (1, optionMap), (1, concatMap), (1, tagged), (1, merge))
+      Gen.frequency((4, genSource), (1, optionMap), (1, concatMap), (1, tagged), (1, merge))
     }
 
     implicit def arbFlow[T: Arbitrary: Cogen]: Arbitrary[Flow[T]] =

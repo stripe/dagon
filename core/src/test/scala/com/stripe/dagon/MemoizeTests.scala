@@ -1,8 +1,8 @@
 package com.stripe.dagon
 
-import org.scalatest.FunSuite
+import org.scalatest.funsuite.AnyFunSuite
 
-class MemoizeTests extends FunSuite {
+class MemoizeTests extends AnyFunSuite {
   test("fibonacci is linear in time") {
 
     var calls = 0
