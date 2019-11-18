@@ -5,7 +5,7 @@ matrix:
   include:
     - scala: 2.11.12
       env: PLATFORM="jvm"
-      script: sbt "++2.11.12" coverage coreJVM/test doc mimaReportBinaryIssues coverageReport && codecov
+      script: sbt "++2.11.12" coverage coreJVM/test doc coreJVM/mimaReportBinaryIssues coverageReport && codecov
       #script: sbt "++2.11.12" coverage coreJVM/test doc coverageReport && codecov
 
     - scala: 2.11.12
@@ -14,7 +14,7 @@ matrix:
 
     - scala: 2.12.9
       env: PLATFORM="jvm"
-      script: sbt "++2.12.9" coverage coreJVM/test doc mimaReportBinaryIssues coverageReport && codecov
+      script: sbt "++2.12.9" coverage coreJVM/test doc coreJVM/mimaReportBinaryIssues coverageReport && codecov
       #script: sbt "++2.12.9" coverage coreJVM/test doc coverageReport && codecov
 
     - scala: 2.12.9
