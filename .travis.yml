@@ -1,28 +1,23 @@
+language: scala
+jdk: openjdk11
+
 matrix:
   include:
     - scala: 2.11.11
-      language: scala
-      jdk: openjdk10
       env: PLATFORM="jvm"
       #script: sbt "++2.11.11" coverage coreJVM/test doc mimaReportBinaryIssues coverageReport && codecov
       script: sbt "++2.11.11" coverage coreJVM/test doc coverageReport && codecov
 
     - scala: 2.11.11
-      language: scala
-      jdk: openjdk10
       env: PLATFORM="js"
       script: sbt "++2.11.11" coreJS/test
 
     - scala: 2.12.3
-      language: scala
-      jdk: openjdk10
       env: PLATFORM="jvm"
       #script: sbt "++2.12.3" coverage coreJVM/test doc mimaReportBinaryIssues coverageReport && codecov
       script: sbt "++2.12.3" coverage coreJVM/test doc coverageReport && codecov
 
     - scala: 2.12.3
-      language: scala
-      jdk: openjdk10
       env: PLATFORM="js"
       script: sbt "++2.12.3" coreJS/test
 
