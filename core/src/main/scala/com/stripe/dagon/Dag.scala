@@ -337,13 +337,15 @@ sealed abstract class Dag[N[_]] extends Serializable { self =>
     def toLiteral = node2Literal
   }
 
-  // for binary compatibility
+  // these are included for binary compatibility
+
+  // $COVERAGE-OFF$
   def com$stripe$dagon$Dag$$copy$default$2(): com.stripe.dagon.FunctionK[N, Literal[N, ?]] =
     self.toLiteral
 
-  // for binary compatibility
   def com$stripe$dagon$Dag$$copy$default$3(): scala.collection.immutable.Set[Id[_]] =
     self.roots
+  // $COVERAGE-ON$
 
   // Produce a new DAG that is equivalent to this one, but which frees
   // orphaned nodes and other internal state which may no longer be
