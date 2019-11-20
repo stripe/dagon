@@ -18,10 +18,11 @@ class MemoizeTests extends AnyFunSuite {
         }
       }
 
-    lazy val streamFib: Stream[Long] =
-      0L #:: 1L #:: (streamFib.zip(streamFib.drop(1)).map { case (a, b) => a + b })
+    def fib2(n: Int, x: Long, y: Long): Long =
+      if (n == 0) x
+      else fib2(n - 1, y, x + y)
 
-    assert(fib(100) == streamFib(100))
+    assert(fib(100) == fib2(100, 0L, 1L))
     assert(calls == 101)
   }
 

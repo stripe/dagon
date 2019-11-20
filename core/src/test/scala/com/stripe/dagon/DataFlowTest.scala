@@ -5,6 +5,8 @@ import org.scalacheck.{Arbitrary, Cogen, Gen}
 import org.scalatestplus.scalacheck.ScalaCheckDrivenPropertyChecks._
 import scala.util.control.TailCalls
 
+import ScalaVersionCompat.{IterableOnce, iterateOnce, lazyListFromIterator}
+
 object DataFlowTest {
   sealed abstract class Flow[+T] extends Product {
     def filter(fn: T => Boolean): Flow[T] =
@@ -16,7 +18,7 @@ object DataFlowTest {
     def optionMap[U](fn: T => Option[U]): Flow[U] =
       Flow.OptionMapped(this, fn)
 
-    def concatMap[U](fn: T => TraversableOnce[U]): Flow[U] =
+    def concatMap[U](fn: T => IterableOnce[U]): Flow[U] =
       Flow.ConcatMapped(this, fn)
 
     def ++[U >: T](that: Flow[U]): Flow[U] =
@@ -105,7 +107,7 @@ object DataFlowTest {
 
     case class IteratorSource[T](it: Iterator[T]) extends Flow[T]
     case class OptionMapped[T, U](input: Flow[T], fn: T => Option[U]) extends Flow[U]
-    case class ConcatMapped[T, U](input: Flow[T], fn: T => TraversableOnce[U]) extends Flow[U]
+    case class ConcatMapped[T, U](input: Flow[T], fn: T => IterableOnce[U]) extends Flow[U]
     case class Merge[T](left: Flow[T], right: Flow[T]) extends Flow[T]
     case class Merged[T](inputs: List[Flow[T]]) extends Flow[T]
     case class Tagged[A, T](input: Flow[T], tag: A) extends Flow[T]
@@ -195,11 +197,11 @@ object DataFlowTest {
         loop(a, fn1.asInstanceOf[Any => Option[Any]], fn2.asInstanceOf[Any => Option[C]])
       }
     }
-    private case class ComposedCM[A, B, C](fn1: A => TraversableOnce[B], fn2: B => TraversableOnce[C]) extends Function1[A, TraversableOnce[C]] {
-      def apply(a: A): TraversableOnce[C] = fn1(a).flatMap(fn2)
+    private case class ComposedCM[A, B, C](fn1: A => IterableOnce[B], fn2: B => IterableOnce[C]) extends Function1[A, IterableOnce[C]] {
+      def apply(a: A): IterableOnce[C] = iterateOnce(fn1(a)).flatMap(fn2)
     }
-    private case class OptionToConcatFn[A, B](fn: A => Option[B]) extends Function1[A, TraversableOnce[B]] {
-      def apply(a: A): TraversableOnce[B] = fn(a) match {
+    private case class OptionToConcatFn[A, B](fn: A => Option[B]) extends Function1[A, IterableOnce[B]] {
+      def apply(a: A): IterableOnce[B] = fn(a) match {
         case Some(a) => Iterator.single(a)
         case None => Iterator.empty
       }
@@ -341,23 +343,23 @@ object DataFlowTest {
     object evalSource extends PartialRule[Flow] {
       def applyWhere[T](on: Dag[Flow]) = {
         case OptionMapped(src @ IteratorSource(it), fn) if on.hasSingleDependent(src) =>
-          IteratorSource(it.flatMap(fn(_).toIterator))
+          IteratorSource(it.flatMap(fn(_).iterator))
         case ConcatMapped(src @ IteratorSource(it), fn) if on.hasSingleDependent(src) =>
           IteratorSource(it.flatMap(fn))
         case Merge(src1 @ IteratorSource(it1), src2 @ IteratorSource(it2)) if it1 != it2 && on.hasSingleDependent(src1) && on.hasSingleDependent(src2) =>
           IteratorSource(it1 ++ it2)
         case Merge(src1 @ IteratorSource(it1), src2 @ IteratorSource(it2)) if it1 == it2 && on.hasSingleDependent(src1) && on.hasSingleDependent(src2) =>
           // we need to materialize the left
-          val left = it1.toStream
-          IteratorSource((left #::: left).iterator)
+          val left = lazyListFromIterator(it1)
+          IteratorSource((left ++ left).iterator)
         case Merged(Nil) => IteratorSource(Iterator.empty)
         case Merged(single :: Nil) => single
         case Merged((src1 @ IteratorSource(it1)) :: (src2 @ IteratorSource(it2)) :: tail) if it1 != it2 && on.hasSingleDependent(src1) && on.hasSingleDependent(src2) =>
           Merged(IteratorSource(it1 ++ it2) :: tail)
         case Merged((src1 @ IteratorSource(it1)) :: (src2 @ IteratorSource(it2)) :: tail) if it1 == it2 && on.hasSingleDependent(src1) && on.hasSingleDependent(src2) =>
           // we need to materialize the left
-          val left = it1.toStream
-          Merged(IteratorSource((left #::: left).iterator) :: tail)
+          val left = lazyListFromIterator(it1)
+          Merged(IteratorSource((left ++ left).iterator) :: tail)
       }
     }
 

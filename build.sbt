@@ -5,12 +5,27 @@ import sbtcrossproject.CrossPlugin.autoImport.{crossProject, CrossType}
 
 import com.typesafe.tools.mima.plugin.MimaPlugin.mimaDefaultSettings
 
+Global / onChangedBuildSource := ReloadOnSourceChanges
+
+def scalaVersionSpecificFolders(srcName: String, srcBaseDir: java.io.File, scalaVersion: String) = {
+  def extraDirs(suffix: String) =
+    List(CrossType.Pure, CrossType.Full)
+      .flatMap(_.sharedSrcDir(srcBaseDir, srcName).toList.map(f => file(f.getPath + suffix)))
+  CrossVersion.partialVersion(scalaVersion) match {
+    case Some((2, y)) if y <= 12 =>
+      extraDirs("-2.12-")
+    case Some((2, y)) if y >= 13 =>
+      extraDirs("-2.13+")
+    case _ => Nil
+  }
+}
+
 lazy val noPublish = Seq(publish := {}, publishLocal := {}, publishArtifact := false)
 
 lazy val dagonSettings = Seq(
   organization := "com.stripe",
-  scalaVersion := "2.12.9",
-  crossScalaVersions := Seq("2.11.12", "2.12.9"),
+  scalaVersion := "2.13.1",
+  crossScalaVersions := Seq("2.11.12", "2.12.9", "2.13.1"),
   addCompilerPlugin("org.typelevel" %% "kind-projector" % "0.11.0" cross CrossVersion.full),
   libraryDependencies ++= Seq(
     "org.scalacheck" %%% "scalacheck" % "1.14.2" % Test,
@@ -27,17 +42,19 @@ lazy val dagonSettings = Seq(
     "-unchecked",
     "-Xfatal-warnings",
     "-Xlint",
-    "-Yno-adapted-args",
+    //"-Yno-adapted-args", //213
     "-Ywarn-dead-code",
     "-Ywarn-numeric-widen",
-    "-Ywarn-value-discard",
-    "-Xfuture"
+    "-Ywarn-value-discard"//,
+    //"-Xfuture" //213
   ),
   // HACK: without these lines, the console is basically unusable,
   // since all imports are reported as being unused (and then become
   // fatal errors).
   scalacOptions in (Compile, console) ~= { _.filterNot("-Xlint" == _) },
   scalacOptions in (Test, console) := (scalacOptions in (Compile, console)).value,
+  Compile / unmanagedSourceDirectories ++= scalaVersionSpecificFolders("main", baseDirectory.value, scalaVersion.value),
+  Test / unmanagedSourceDirectories ++= scalaVersionSpecificFolders("test", baseDirectory.value, scalaVersion.value),
   // release stuff
   releaseCrossBuild := true,
   releasePublishArtifactsAction := PgpKeys.publishSigned.value,
