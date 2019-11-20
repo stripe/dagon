@@ -45,7 +45,7 @@ lazy val dagonSettings = Seq(
     //"-Yno-adapted-args", //213
     "-Ywarn-dead-code",
     "-Ywarn-numeric-widen",
-    "-Ywarn-value-discard"//,
+    "-Ywarn-value-discard",
     //"-Xfuture" //213
   ),
   // HACK: without these lines, the console is basically unusable,
@@ -53,6 +53,7 @@ lazy val dagonSettings = Seq(
   // fatal errors).
   scalacOptions in (Compile, console) ~= { _.filterNot("-Xlint" == _) },
   scalacOptions in (Test, console) := (scalacOptions in (Compile, console)).value,
+  // use scala-2.12- and scala-2.13+ for per-version sources
   Compile / unmanagedSourceDirectories ++= scalaVersionSpecificFolders("main", baseDirectory.value, scalaVersion.value),
   Test / unmanagedSourceDirectories ++= scalaVersionSpecificFolders("test", baseDirectory.value, scalaVersion.value),
   // release stuff
