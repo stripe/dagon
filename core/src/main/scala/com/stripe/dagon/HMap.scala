@@ -18,6 +18,9 @@
 package com.stripe.dagon
 
 import java.io.Serializable
+
+import ScalaVersionCompat.{LazyList, lazyListFromIterator}
+
 /**
  * This is a weak heterogenous map. It uses equals on the keys,
  * so it is your responsibilty that if k: K[_] == k2: K[_] then
@@ -80,9 +83,9 @@ final class HMap[K[_], V[_]](protected val map: Map[K[_], V[_]]) extends Seriali
       case (k, w) if v == w => k.asInstanceOf[K[T]]
     }.toSet
 
-  def optionMap[R[_]](f: FunctionK[Pair, Lambda[x => Option[R[x]]]]): Stream[R[_]] = {
+  def optionMap[R[_]](f: FunctionK[Pair, Lambda[x => Option[R[x]]]]): LazyList[R[_]] = {
     val fnAny = f.toFunction[Any].andThen(_.iterator)
-    map.iterator.asInstanceOf[Iterator[(K[Any], V[Any])]].flatMap(fnAny).toStream
+    lazyListFromIterator(map.iterator.asInstanceOf[Iterator[(K[Any], V[Any])]].flatMap(fnAny))
   }
 
   def mapValues[V1[_]](f: FunctionK[V, V1]): HMap[K, V1] =

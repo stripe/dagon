@@ -19,6 +19,9 @@ package com.stripe.dagon
 
 import java.io.Serializable
 import scala.util.control.TailCalls
+
+import ScalaVersionCompat.{LazyList, lazyListToIterator}
+
 /**
  * Represents a directed acyclic graph (DAG).
  *
@@ -405,31 +408,32 @@ sealed abstract class Dag[N[_]] extends Serializable { self =>
         // It's important to not compare equality in the Literal
         // space because it can have function members that are
         // equivalent, but not .equals
-        findAll(n).filterNot { id => idToExp(id).isVar } match {
-          case Stream.Empty =>
-            // if the node is the in the graph it has at least
-            // one non-Var node
-            None
-          case nonEmpty =>
-            // there can be duplicate ids. Consider this case:
-            // Id(0) -> Expr.Unary(Id(1), fn)
-            // Id(1) -> Expr.Const(n1)
-            // Id(2) -> Expr.Unary(Id(3), fn)
-            // Id(3) -> Expr.Const(n2)
-            //
-            // then, a rule replaces n1 and n2 both with n3 Then, we'd have
-            // Id(1) -> Var(Id(4))
-            // Id(4) -> Expr.Const(n3)
-            // Id(3) -> Var(Id(4))
-            //
-            // and now, Id(0) and Id(2) both point to non-Var nodes, but also
-            // both are equal
+        val lst = findAll(n).filterNot(id => idToExp(id).isVar)
+        val it = lazyListToIterator(lst)
+        if (it.hasNext) {
+          // there can be duplicate ids. Consider this case:
+          // Id(0) -> Expr.Unary(Id(1), fn)
+          // Id(1) -> Expr.Const(n1)
+          // Id(2) -> Expr.Unary(Id(3), fn)
+          // Id(3) -> Expr.Const(n2)
+          //
+          // then, a rule replaces n1 and n2 both with n3 Then, we'd have
+          // Id(1) -> Var(Id(4))
+          // Id(4) -> Expr.Const(n3)
+          // Id(3) -> Var(Id(4))
+          //
+          // and now, Id(0) and Id(2) both point to non-Var nodes, but also
+          // both are equal
 
-            // We use the maximum ID which is important to deal with
-            // cycle avoidance in applyRule since we guarantee
-            // that all the nodes that are repointed are computed
-            // before we add a new node to graph
-            Some(nonEmpty.max)
+          // We use the maximum ID which is important to deal with
+          // cycle avoidance in applyRule since we guarantee
+          // that all the nodes that are repointed are computed
+          // before we add a new node to graph
+          Some(it.max)
+        } else {
+          // if the node is the in the graph it has at least
+          // one non-Var node
+          None
         }
       }
     )
@@ -437,7 +441,7 @@ sealed abstract class Dag[N[_]] extends Serializable { self =>
   /**
    * Nodes can have multiple ids in the graph, this gives all of them
    */
-  def findAll[T](node: N[T]): Stream[Id[T]] = {
+  def findAll[T](node: N[T]): LazyList[Id[T]] = {
     // TODO: this computation is really expensive, 60% of CPU in a recent benchmark
     // maintaining these mappings would be nice, but maybe expensive as we are rewriting
     // nodes
@@ -449,7 +453,7 @@ sealed abstract class Dag[N[_]] extends Serializable { self =>
     }
 
     // this cast is safe if node == expr.evaluate(idToExp) implies types match
-    idToExp.optionMap(f).asInstanceOf[Stream[Id[T]]]
+    idToExp.optionMap(f).asInstanceOf[LazyList[Id[T]]]
   }
 
   /**
@@ -622,10 +626,14 @@ sealed abstract class Dag[N[_]] extends Serializable { self =>
         case (_, _, Nil, Nil, _) =>
           None
         case (depth, _, Nil, nextBatch, seen) =>
-          // nextBatch has at least one item, and sorting preserves that
-          val h :: tail = sort(nextBatch)
-          val (nextBatch1, seen1) = computeNext(nextBatch, seen)
-          Some((depth + 1, h, tail, nextBatch1, seen1))
+          sort(nextBatch) match {
+            case h :: tail =>
+              val (nextBatch1, seen1) = computeNext(nextBatch, seen)
+              Some((depth + 1, h, tail, nextBatch1, seen1))
+            case Nil =>
+              // nextBatch has at least one item, and sorting preserves that
+              sys.error("impossible")
+          }
         case (d, _, h :: tail, next, seen) =>
           Some((d, h, tail, next, seen))
       }

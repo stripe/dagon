@@ -20,6 +20,8 @@ package com.stripe.dagon
 import org.scalacheck.Prop._
 import org.scalacheck.{Gen, Prop, Properties}
 
+import ScalaVersionCompat.ieeeDoubleOrdering
+
 object DagTests extends Properties("Dag") {
 
   /*
@@ -164,16 +166,22 @@ object DagTests extends Properties("Dag") {
     ((end - start).toDouble, res)
   }
 
- //This is a bit noisey due to timing, but often passes
+  //This is a bit noisey due to timing, but often passes
   property("Evaluation is at most n^(3.0)") = {
-     def fibFormula(n: Int) = fib(Formula(1), Formula(1), n)(Sum(_, _))
+     def fibFormula(n: Int): Formula[Unit] = fib(Formula(1), Formula(1), n)(Sum(_, _))
+
+    def runit(n: Int): (Double, Int) =
+      timeit(Dag.applyRule(fibFormula(n), toLiteral, EvaluationRule)) match {
+        case (t, Constant(res)) => (t, res)
+        case (_, other) => sys.error(s"unexpected result: $other")
+      }
 
      def check = {
-       val (t10, Constant(res10)) = timeit(Dag.applyRule(fibFormula(10), toLiteral, EvaluationRule))
-       val (t20, Constant(res20)) = timeit(Dag.applyRule(fibFormula(20), toLiteral, EvaluationRule))
-       val (t40, Constant(res40)) = timeit(Dag.applyRule(fibFormula(40), toLiteral, EvaluationRule))
-       val (t80, Constant(res80)) = timeit(Dag.applyRule(fibFormula(80), toLiteral, EvaluationRule))
-       val (t160, Constant(res160)) = timeit(Dag.applyRule(fibFormula(160), toLiteral, EvaluationRule))
+       val (t10, res10) = runit(10)
+       val (t20, res20) = runit(20)
+       val (t40, res40) = runit(40)
+       val (t80, res80) = runit(80)
+       val (t160, res160) = runit(160)
        // if this is polynomial = t(n) ~ Cn^k, so t(20)/t(10) == t(40)/t(20) == 2^k
        val k = List(t160/t80, t80/t40, t40/t20, t20/t10).map(math.log(_)/math.log(2.0)).max
        println(s"${t10}, ${t20}, ${t40}, ${t80}, ${t160}, $k")
