@@ -4,6 +4,11 @@ object ScalaVersionCompat {
   type LazyList[+A] = scala.collection.immutable.Stream[A]
   val LazyList = scala.collection.immutable.Stream
 
+  type IterableOnce[+A] = scala.collection.TraversableOnce[A]
+
+  def iterateOnce[A](as: IterableOnce[A]): Iterator[A] =
+    as.toIterator
+
   def lazyList[A](as: A*): LazyList[A] =
     Stream(as: _*)
 

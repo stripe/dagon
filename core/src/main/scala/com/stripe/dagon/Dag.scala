@@ -623,13 +623,16 @@ sealed abstract class Dag[N[_]] extends Serializable { self =>
 
     def nextState(current: State): Option[State] =
       current match {
+        case (_, _, Nil, Nil, _) =>
+          None
         case (depth, _, Nil, nextBatch, seen) =>
           sort(nextBatch) match {
             case h :: tail =>
               val (nextBatch1, seen1) = computeNext(nextBatch, seen)
               Some((depth + 1, h, tail, nextBatch1, seen1))
             case Nil =>
-              None
+              // nextBatch has at least one item, and sorting preserves that
+              sys.error("impossible")
           }
         case (d, _, h :: tail, next, seen) =>
           Some((d, h, tail, next, seen))
