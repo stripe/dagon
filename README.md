@@ -20,7 +20,7 @@ Dagon is a library for rewriting
 
 ### Quick Start
 
-Dagon supports Scala 2.10, 2.11, and 2.12. It supports both the JVM
+Dagon supports Scala 2.11, 2.12, and 2.13. It supports both the JVM
 and JS platforms.
 
 To use Dagon in your own project, you can include this snippet in
@@ -29,12 +29,12 @@ your `build.sbt` file:
 ```scala
 // use this snippet for the JVM
 libraryDependencies ++= List(
-  "com.stripe" %% "dagon-core" % "0.3.0",
+  "com.stripe" %% "dagon-core" % "0.3.3",
   compilerPlugin("org.spire-math" %% "kind-projector" % "0.9.4"))
 
 // use this snippet for JS, or cross-building
 libraryDependencies ++= List(
-  "com.stripe" %%% "dagon-core" % "0.3.0",
+  "com.stripe" %%% "dagon-core" % "0.3.3",
   compilerPlugin("org.spire-math" %% "kind-projector" % "0.9.4"))
 ```
 
