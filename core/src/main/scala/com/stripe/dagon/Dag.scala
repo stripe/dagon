@@ -94,6 +94,16 @@ sealed abstract class Dag[N[_]] extends Serializable { self =>
   def applySeq(phases: Seq[Rule[N]]): Dag[N] =
     phases.foldLeft(this) { (dag, rule) => dag(rule) }
 
+  def applySeqOnce(phases: Seq[Rule[N]]): Dag[N] =
+    phases
+      .iterator
+      .map { rule => applyOnce(rule) }
+      .filter(_ ne this)
+      .take(1)
+      .toList
+      .headOption
+      .getOrElse(this)
+
   /**
    * apply the rule at the first place that satisfies
    * it, and return from there.
@@ -779,5 +789,17 @@ object Dag {
   def applyRule[T, N[_]](n: N[T], nodeToLit: FunctionK[N, Literal[N, ?]], rule: Rule[N]): N[T] = {
     val (dag, id) = apply(n, nodeToLit)
     dag(rule).evaluate(id)
+  }
+
+  /**
+   * This is useful when you have rules you want applied in a certain order.
+   * Given a N[T] and a way to convert to Literal[T, N],
+   * for each rule in the sequence,
+   * apply the given rule until it no longer applies, and return the N[T] which is
+   * equivalent under the given rule
+   */
+  def applyRuleSeq[T, N[_]](n: N[T], nodeToLit: FunctionK[N, Literal[N, ?]], rules: Seq[Rule[N]]): N[T] = {
+    val (dag, id) = apply(n, nodeToLit)
+    dag.applySeq(rules).evaluate(id)
   }
 }
