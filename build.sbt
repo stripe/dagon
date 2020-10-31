@@ -28,7 +28,7 @@ lazy val dagonSettings = Seq(
   crossScalaVersions := Seq("2.11.12", "2.12.9", "2.13.1"),
   addCompilerPlugin("org.typelevel" %% "kind-projector" % "0.11.0" cross CrossVersion.full),
   libraryDependencies ++= Seq(
-    "org.scalacheck" %%% "scalacheck" % "1.14.3" % Test,
+    "org.scalacheck" %%% "scalacheck" % "1.15.0" % Test,
     "org.scalatestplus" %%% "scalatestplus-scalacheck" % "3.1.0.0-RC2" % Test),
   scalacOptions ++= Seq(
     "-deprecation",
