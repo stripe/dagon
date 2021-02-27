@@ -3,12 +3,12 @@ jdk: openjdk11
 
 matrix:
   include:
-    - scala: 2.11.12
+    - scala: 2.13.5
       env: PLATFORM="jvm"
       script: sbt "++2.11.12" coverage coreJVM/test doc coreJVM/mimaReportBinaryIssues coverageReport && codecov
       #script: sbt "++2.11.12" coverage coreJVM/test doc coverageReport && codecov
 
-    - scala: 2.11.12
+    - scala: 2.13.5
       env: PLATFORM="js"
       script: sbt "++2.11.12" coreJS/test
 
