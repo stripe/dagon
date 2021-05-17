@@ -24,8 +24,8 @@ lazy val noPublish = Seq(publish := {}, publishLocal := {}, publishArtifact := f
 
 lazy val dagonSettings = Seq(
   organization := "com.stripe",
-  scalaVersion := "2.13.1",
-  crossScalaVersions := Seq("2.11.12", "2.12.9", "2.13.1"),
+  scalaVersion := "2.13.6",
+  crossScalaVersions := Seq("2.11.12", "2.12.9", "2.13.6"),
   addCompilerPlugin("org.typelevel" %% "kind-projector" % "0.11.0" cross CrossVersion.full),
   libraryDependencies ++= Seq(
     "org.scalacheck" %%% "scalacheck" % "1.14.3" % Test,
