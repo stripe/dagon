@@ -25,7 +25,7 @@ lazy val noPublish = Seq(publish := {}, publishLocal := {}, publishArtifact := f
 lazy val dagonSettings = Seq(
   organization := "com.stripe",
   scalaVersion := "2.13.7",
-  crossScalaVersions := Seq("2.11.12", "2.12.9", "2.13.7"),
+  crossScalaVersions := Seq("2.11.12", "2.12.15", "2.13.7"),
   addCompilerPlugin("org.typelevel" %% "kind-projector" % "0.11.0" cross CrossVersion.full),
   libraryDependencies ++= Seq(
     "org.scalacheck" %%% "scalacheck" % "1.14.3" % Test,
@@ -51,15 +51,15 @@ lazy val dagonSettings = Seq(
   // HACK: without these lines, the console is basically unusable,
   // since all imports are reported as being unused (and then become
   // fatal errors).
-  scalacOptions in (Compile, console) ~= { _.filterNot("-Xlint" == _) },
-  scalacOptions in (Test, console) := (scalacOptions in (Compile, console)).value,
+  (Compile / console / scalacOptions) ~= { _.filterNot("-Xlint" == _) },
+  (Test / console / scalacOptions) := (Compile / console / scalacOptions).value,
   Compile / unmanagedSourceDirectories ++= scalaVersionSpecificFolders("main", baseDirectory.value, scalaVersion.value),
   Test / unmanagedSourceDirectories ++= scalaVersionSpecificFolders("test", baseDirectory.value, scalaVersion.value),
   // release stuff
   releaseCrossBuild := true,
   releasePublishArtifactsAction := PgpKeys.publishSigned.value,
   publishMavenStyle := true,
-  publishArtifact in Test := false,
+  (Test / publishArtifact) := false,
   pomIncludeRepository := Function.const(false),
   releaseProcess := Seq[ReleaseStep](
     checkSnapshotDependencies,
@@ -117,10 +117,10 @@ def previousArtifact(proj: String) =
   "com.stripe" %% s"dagon-$proj" % "0.3.0"
 
 lazy val commonJvmSettings = Seq(
-  testOptions in Test += Tests.Argument(TestFrameworks.ScalaTest, "-oDF"))
+  (Test / testOptions) += Tests.Argument(TestFrameworks.ScalaTest, "-oDF"))
 
 lazy val commonJsSettings = Seq(
-  scalaJSStage in Global := FastOptStage,
+  (Global / scalaJSStage) := FastOptStage,
   parallelExecution := false,
   jsEnv := new org.scalajs.jsenv.nodejs.NodeJSEnv(),
   // batch mode decreases the amount of memory needed to compile scala.js code
@@ -153,9 +153,8 @@ lazy val dagonJS = project
   .dependsOn(coreJS)
   .enablePlugins(ScalaJSPlugin)
 
-lazy val core = crossProject(JSPlatform, JVMPlatform)
-  .crossType(CrossType.Pure)
-  .in(file("core"))
+lazy val core = (file("core") / crossProject(JSPlatform, JVMPlatform)
+  .crossType(CrossType.Pure))
   .settings(name := "dagon-core")
   .settings(moduleName := "dagon-core")
   .settings(dagonSettings: _*)
@@ -184,8 +183,8 @@ lazy val docs = project
   .settings(dagonSettings: _*)
   .settings(noPublish: _*)
   .enablePlugins(TutPlugin)
-  .settings(scalacOptions in Tut := {
-    val testOptions = scalacOptions.in(test).value
+  .settings((Tut / scalacOptions) := {
+    val testOptions = (test / scalacOptions).value
     val unwantedOptions = Set("-Xlint", "-Xfatal-warnings")
     testOptions.filterNot(unwantedOptions)
   })
